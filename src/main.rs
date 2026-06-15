@@ -16,6 +16,28 @@ use std::io::IsTerminal;
 use std::rc::Rc;
 use typechecker::{TyGlobal, typecheck_toplevel};
 
+/// Returns the change in open-paren depth contributed by `line`.
+/// Counts `(` as +1 and `)` as -1, ignoring characters inside strings
+/// (a simple approximation sufficient for a Lisp reader).
+fn paren_delta(line: &str) -> i32 {
+    let mut depth: i32 = 0;
+    let mut in_str = false;
+    let mut escape = false;
+    for ch in line.chars() {
+        if escape { escape = false; continue; }
+        if ch == '\\' && in_str { escape = true; continue; }
+        if ch == '"' { in_str = !in_str; continue; }
+        if in_str { continue; }
+        if ch == ';' { break; } // line comment
+        match ch {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            _ => {}
+        }
+    }
+    depth
+}
+
 /// Parses, type-checks, and evaluates each top-level expression in `src`.
 fn run(src: &str, env: &Env, ty_global: &mut TyGlobal) {
     match parse_all(src) {
@@ -143,51 +165,99 @@ fn main() -> Result<(), std::io::Error> {
             let file = std::fs::File::open(&args[1])?;
             let mut reader = std::io::BufReader::new(file);
             let mut line_buf = String::new();
+            let mut accumulator = String::new();
+            let mut depth: i32 = 0;
 
-            // Optimize memory by reusing a single line buffer
             while std::io::BufRead::read_line(&mut reader, &mut line_buf)? > 0 {
-                // Trim trailing newline or whitespace if your parser needs it clean
                 let trimmed = line_buf.trim_end();
-                if !trimmed.is_empty() {
-                    run(trimmed, &env, &mut ty_global);
+                if trimmed.is_empty() {
+                    line_buf.clear();
+                    continue;
                 }
-                line_buf.clear(); // Clear the buffer without deallocating capacity
+                depth += paren_delta(trimmed);
+                if !accumulator.is_empty() {
+                    accumulator.push('\n');
+                }
+                accumulator.push_str(trimmed);
+                if depth <= 0 {
+                    run(&accumulator, &env, &mut ty_global);
+                    accumulator.clear();
+                    depth = 0;
+                }
+                line_buf.clear();
+            }
+            // Run any remaining input (e.g. a trailing atom with no parens)
+            if !accumulator.trim().is_empty() {
+                run(&accumulator, &env, &mut ty_global);
             }
         }
     } else {
         // --- Stdio Mode: REPL or Batch ---
         use std::io::{stdin, stdout, Write, BufRead};
         if stdin().is_terminal() {
-            // --- Interactive REPL ---
+            // --- Interactive REPL (multiline-aware) ---
             println!("uwulisp interactive REPL. Press Ctrl-D or type 'exit' to exit.");
             let mut line_buf = String::new();
+            let mut accumulator = String::new();
+            let mut depth: i32 = 0;
             loop {
-                print!("uwulisp> ");
+                if depth <= 0 {
+                    print!("uwulisp> ");
+                } else {
+                    print!("    ...> ");
+                }
                 stdout().flush()?;
                 line_buf.clear();
                 let bytes_read = stdin().read_line(&mut line_buf)?;
                 if bytes_read == 0 {
-                    // EOF
+                    // EOF — flush whatever we have
+                    if !accumulator.trim().is_empty() {
+                        run(&accumulator, &env, &mut ty_global);
+                    }
                     break;
                 }
                 let trimmed = line_buf.trim();
-                if trimmed == "exit" {
+                if depth <= 0 && trimmed == "exit" {
                     break;
                 }
-                if !trimmed.is_empty() {
-                    run(trimmed, &env, &mut ty_global);
+                if trimmed.is_empty() {
+                    continue;
+                }
+                depth += paren_delta(trimmed);
+                if !accumulator.is_empty() {
+                    accumulator.push('\n');
+                }
+                accumulator.push_str(trimmed);
+                if depth <= 0 {
+                    run(&accumulator, &env, &mut ty_global);
+                    accumulator.clear();
+                    depth = 0;
                 }
             }
         } else {
-            // --- Batch stdin ---
+            // --- Batch stdin (multiline-aware) ---
             let mut reader = std::io::BufReader::new(stdin());
             let mut line_buf = String::new();
+            let mut accumulator = String::new();
+            let mut depth: i32 = 0;
             while reader.read_line(&mut line_buf)? > 0 {
                 let trimmed = line_buf.trim_end();
                 if !trimmed.is_empty() {
-                    run(trimmed, &env, &mut ty_global);
+                    depth += paren_delta(trimmed);
+                    if !accumulator.is_empty() {
+                        accumulator.push('\n');
+                    }
+                    accumulator.push_str(trimmed);
+                    if depth <= 0 {
+                        run(&accumulator, &env, &mut ty_global);
+                        accumulator.clear();
+                        depth = 0;
+                    }
                 }
                 line_buf.clear();
+            }
+            if !accumulator.trim().is_empty() {
+                run(&accumulator, &env, &mut ty_global);
             }
         }
     }
