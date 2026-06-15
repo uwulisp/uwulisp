@@ -202,7 +202,7 @@ fn main() -> Result<(), std::io::Error> {
             let mut depth: i32 = 0;
             loop {
                 if depth <= 0 {
-                    print!("uwulisp> ");
+                    print!("uwu> ");
                 } else {
                     print!("    ...> ");
                 }
