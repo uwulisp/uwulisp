@@ -11,7 +11,7 @@ pub fn eval(expr: &Expr, env: &Env, lex_env: &Rc<LexEnv>) -> Result<Expr, String
         Expr::Number(_) => Ok(expr.clone()),
         Expr::Symbol(s) => env_get(env, s),
         Expr::Index(i) => lex_env.get(*i).ok_or_else(|| format!("unbound index {}", i)),
-        Expr::Func(_) | Expr::Lambda(..) | Expr::Macro(..) | Expr::Path(..) | Expr::Pi(..) | Expr::Sigma(..) => Ok(expr.clone()),
+        Expr::Func(_) | Expr::Lambda(..) | Expr::Macro(..) | Expr::Path(..) | Expr::Pi(..) | Expr::Sigma(..) | Expr::GlueType(..) | Expr::Glue(..) => Ok(expr.clone()),
         Expr::List(list) => {
             if list.is_empty() {
                 return Ok(Expr::List(vec![]));
@@ -38,6 +38,10 @@ pub fn eval(expr: &Expr, env: &Env, lex_env: &Rc<LexEnv>) -> Result<Expr, String
 
                     "sigma" => return eval_sigma(list, env, lex_env),
                     "sigmacod" => return eval_sigmacod(list, env, lex_env),
+
+                    "glue-type" => return eval_glue_type(list, env, lex_env),
+                    "glue"      => return eval_glue(list, env, lex_env),
+                    "unglue"    => return eval_unglue(list, env, lex_env),
                     _ => {
                         // If `op` names a macro, expand (with raw, unevaluated
                         // argument expressions) and evaluate the result.
@@ -248,6 +252,51 @@ fn eval_let(list: &[Expr], env: &Env, lex_env: &Rc<LexEnv>) -> Result<Expr, Stri
         result = eval(e, env, &current_env)?;
     }
     Ok(result)
+}
+
+/// (glue-type base equiv)
+///
+/// Constructs a Glue type: `base` is the underlying type A, and `equiv` is a
+/// function f : B → A witnessing that B is (fibered) equivalent to A along
+/// some face. The resulting `GlueType` value acts as a type whose terms are
+/// `Glue` introductions that pair a B-value with the equivalence.
+fn eval_glue_type(list: &[Expr], env: &Env, lex_env: &Rc<LexEnv>) -> Result<Expr, String> {
+    if list.len() != 3 {
+        return Err("glue-type: expected (glue-type <base-type> <equiv>)".into());
+    }
+    let base  = eval(&list[1], env, lex_env)?;
+    let equiv = eval(&list[2], env, lex_env)?;
+    Ok(Expr::GlueType(Box::new(base), Box::new(equiv)))
+}
+
+/// (glue val equiv)
+///
+/// Introduction form for Glue types. `val` is the B-side fiber value and
+/// `equiv` is the forward function f : B → A. The result is a `Glue` term
+/// that remembers both so that `unglue` can recover the A-side image.
+fn eval_glue(list: &[Expr], env: &Env, lex_env: &Rc<LexEnv>) -> Result<Expr, String> {
+    if list.len() != 3 {
+        return Err("glue: expected (glue <val> <equiv>)".into());
+    }
+    let val   = eval(&list[1], env, lex_env)?;
+    let equiv = eval(&list[2], env, lex_env)?;
+    Ok(Expr::Glue(Box::new(val), Box::new(equiv)))
+}
+
+/// (unglue g)
+///
+/// Elimination form for Glue terms. Applies the stored equivalence function
+/// to the stored fiber value, projecting back into the base type A.
+/// That is: `(unglue (glue v f))` reduces to `(f v)`.
+fn eval_unglue(list: &[Expr], env: &Env, lex_env: &Rc<LexEnv>) -> Result<Expr, String> {
+    if list.len() != 2 {
+        return Err("unglue: expected (unglue <glue-term>)".into());
+    }
+    let g = eval(&list[1], env, lex_env)?;
+    match g {
+        Expr::Glue(val, equiv) => apply(*equiv, &[*val], env),
+        other => Err(format!("unglue: not a glue term: {:?}", other)),
+    }
 }
 
 /// Applies a function (builtin or lambda) to already-evaluated arguments.

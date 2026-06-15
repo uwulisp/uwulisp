@@ -96,6 +96,16 @@ fn ty_path(dom: Expr) -> Expr {
     Expr::List(vec![Expr::Symbol("__Path__".into()), dom])
 }
 
+/// `(__GlueType__ base equiv-ty)` — the type of `GlueType` type-formers.
+fn ty_glue_type() -> Expr {
+    Expr::Symbol("__GlueType__".into())
+}
+
+/// `(__Glue__ base)` — the type of a `Glue` intro term whose base type is `base`.
+fn ty_glue(base: Expr) -> Expr {
+    Expr::List(vec![Expr::Symbol("__Glue__".into()), base])
+}
+
 // ---------------------------------------------------------------------------
 // Sentinel predicates
 // ---------------------------------------------------------------------------
@@ -118,6 +128,20 @@ fn as_path_ty(t: &Expr) -> Option<&Expr> {
         if l.len() == 2 {
             if let Expr::Symbol(s) = &l[0] {
                 if s == "__Path__" {
+                    return Some(&l[1]);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Matches `(__Glue__ base)` and returns `Some(base)`.
+fn as_glue_ty(t: &Expr) -> Option<&Expr> {
+    if let Expr::List(l) = t {
+        if l.len() == 2 {
+            if let Expr::Symbol(s) = &l[0] {
+                if s == "__Glue__" {
                     return Some(&l[1]);
                 }
             }
@@ -216,7 +240,7 @@ fn infer_inner(
                 "print" => Ok(ty_any()),
                 "i0" | "i1" => Ok(ty_num()),
                 "refl" => Ok(ty_any()),
-                "pi?" | "sigma?" | "path?" => Ok(ty_num()),
+                "pi?" | "sigma?" | "path?" | "glue?" | "glue-type?" => Ok(ty_num()),
                 _ => match env_get(env, s) {
                     Ok(v) => infer_value_type(&v),
                     Err(_) => Err(format!("type error: undefined symbol '{}'", s)),
@@ -251,6 +275,13 @@ fn infer_inner(
         }
         Expr::Pi(..) => Ok(ty_type()),
         Expr::Sigma(..) => Ok(ty_type()),
+        Expr::GlueType(..) => Ok(ty_glue_type()),
+        Expr::Glue(_, equiv) => {
+            // The base type is whatever the equiv maps into. Without evaluating
+            // it fully we approximate as __Glue__ __Any__.
+            let _ = infer_value_type(equiv);
+            Ok(ty_glue(ty_any()))
+        }
 
         // ----- Lists (special forms and applications) ----------------------
         Expr::List(list) => {
@@ -276,6 +307,10 @@ fn infer_inner(
 
                     "sigma" => return Ok(ty_type()),
                     "sigmacod" => return infer_sigmacod(list, env, lex_env, ty_global, ty_env),
+
+                    "glue-type" => return Ok(ty_glue_type()),
+                    "glue"      => return infer_glue(list, env, lex_env, ty_global, ty_env),
+                    "unglue"    => return infer_unglue(list, env, lex_env, ty_global, ty_env),
 
                     "defmacro" => return Ok(ty_any()),
                     _ => {}
@@ -669,6 +704,55 @@ fn check_path_against_pathty(
 }
 
 // ---------------------------------------------------------------------------
+// Infer helpers for glue / unglue
+// ---------------------------------------------------------------------------
+
+fn infer_glue(
+    list: &[Expr],
+    env: &Env,
+    lex_env: &Rc<LexEnv>,
+    ty_global: &TyGlobal,
+    ty_env: &Rc<TyEnv>,
+) -> Result<Expr, String> {
+    // (glue val equiv)
+    // val  : B   (the fiber-side value)
+    // equiv: B → A  (the forward equivalence)
+    // result type: __Glue__ __Any__  (we'd need full type annotation to recover A precisely)
+    if list.len() != 3 {
+        return Err("type error: glue expects (glue <val> <equiv>)".into());
+    }
+    infer(&list[1], env, lex_env, ty_global, ty_env)?;
+    infer(&list[2], env, lex_env, ty_global, ty_env)?;
+    Ok(ty_glue(ty_any()))
+}
+
+fn infer_unglue(
+    list: &[Expr],
+    env: &Env,
+    lex_env: &Rc<LexEnv>,
+    ty_global: &TyGlobal,
+    ty_env: &Rc<TyEnv>,
+) -> Result<Expr, String> {
+    // (unglue g)
+    // g : __Glue__ A  →  result : A
+    // We try to extract A from the inferred glue type; otherwise __Any__.
+    if list.len() != 2 {
+        return Err("type error: unglue expects (unglue <glue-term>)".into());
+    }
+    let g_ty = infer(&list[1], env, lex_env, ty_global, ty_env)?;
+    if let Some(base) = as_glue_ty(&g_ty) {
+        return Ok(base.clone());
+    }
+    if is_any(&g_ty) {
+        return Ok(ty_any());
+    }
+    Err(format!(
+        "type error: unglue requires a Glue term, got {:?}",
+        g_ty
+    ))
+}
+
+// ---------------------------------------------------------------------------
 // Infer the type of an *already-evaluated* Expr value (used for globals).
 // ---------------------------------------------------------------------------
 
@@ -681,6 +765,8 @@ fn infer_value_type(v: &Expr) -> Result<Expr, String> {
             // We can't easily re-infer without ty_env, so return a generic path type.
             Ok(ty_path(ty_any()))
         }
+        Expr::GlueType(..) => Ok(ty_glue_type()),
+        Expr::Glue(..) => Ok(ty_glue(ty_any())),
         Expr::Func(_) | Expr::Lambda(..) | Expr::Macro(..) => Ok(ty_any()),
         Expr::List(l) if l.is_empty() => Ok(ty_any()),
         Expr::List(_) | Expr::Symbol(_) | Expr::Index(_) => Ok(ty_any()),

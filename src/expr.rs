@@ -17,6 +17,18 @@ pub enum Expr {
     Path(Box<Expr>, Rc<LexEnv>),
     Pi(Box<Expr>, Box<Expr>, Rc<LexEnv>),
     Sigma(Box<Expr>, Box<Expr>, Rc<LexEnv>),
+    /// `(glue-type base equiv)` — the Glue type former.
+    ///
+    /// `base` is the base type A; `equiv` is an equivalence e : B ≃ A,
+    /// represented here as a function B → A (the forward/coercion direction).
+    /// A term of type `GlueType(A, e)` is a value in B that is "glued" to A
+    /// via e, i.e. there is a canonical element `e(b) : A` for each `b : B`.
+    GlueType(Box<Expr>, Box<Expr>),
+    /// `(glue val equiv)` — the Glue introduction form.
+    ///
+    /// `val` is the B-side value and `equiv` is the forward function B → A.
+    /// The pair records both so that `unglue` can extract the A-side image.
+    Glue(Box<Expr>, Box<Expr>),
 }
 
 #[derive(Clone, Debug)]
@@ -66,6 +78,8 @@ impl fmt::Debug for Expr {
             Expr::Path(..) => write!(f, "<path>"),
             Expr::Pi(dom, cod, _) => write!(f, "(Π {:?} {:?})", dom, cod),
             Expr::Sigma(dom, cod, _) => write!(f, "(Σ {:?} {:?})", dom, cod),
+            Expr::GlueType(base, equiv) => write!(f, "(GlueType {:?} {:?})", base, equiv),
+            Expr::Glue(val, equiv) => write!(f, "(glue {:?} {:?})", val, equiv),
         }
     }
 }

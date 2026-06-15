@@ -108,6 +108,25 @@ fn main() {
         "(define dyn-vec (sigma (len) 0 (* len 10)))",
         "(sigmacod dyn-vec 3)",
         "(sigmacod dyn-vec 5)",
+
+        // ----- glue types ---------------------------------------------------
+        // equiv: the doubling function  B=Num → A=Num,  f(x) = x*2
+        "(define double (lambda (x) (* x 2)))",
+        // Build a GlueType pairing Num with the doubling equivalence.
+        "(define gt (glue-type 0 double))",
+        "(glue-type? gt)",
+        "(glue-type? 42)",
+        // Introduce a Glue term: fiber value 21, same doubling equiv.
+        "(define gv (glue 21 double))",
+        "(glue? gv)",
+        "(glue? 42)",
+        // Eliminate: unglue applies double to 21, recovering 42 in the base type.
+        "(unglue gv)",
+        // Glue composes naturally with paths: a path of Glue terms.
+        "(define gpath (path (i) (glue (* i 10) double)))",
+        "(unglue (papply gpath 0.0))",
+        "(unglue (papply gpath 0.5))",
+        "(unglue (papply gpath 1.0))",
     ];
 
     for src in exprs {

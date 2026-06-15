@@ -22,6 +22,7 @@ pub fn global_env() -> Env {
     register_intervals(&env);
     register_pi_types(&env);
     register_sigma_types(&env);
+    register_glue_types(&env);
 
     env
 }
@@ -270,6 +271,38 @@ fn register_sigma_types(env: &Env) {
             }
             Ok(Expr::Number(match &args[0] {
                 Expr::Sigma(..) => 1.0,
+                _ => 0.0,
+            }))
+        })),
+    );
+}
+
+fn register_glue_types(env: &Env) {
+    // (glue? x) -- returns 1 if x is a Glue introduction term, 0 otherwise.
+    env_set(
+        env,
+        "glue?".into(),
+        Expr::Func(Rc::new(|args| {
+            if args.len() != 1 {
+                return Err("glue?: expects exactly 1 argument".into());
+            }
+            Ok(Expr::Number(match &args[0] {
+                Expr::Glue(..) => 1.0,
+                _ => 0.0,
+            }))
+        })),
+    );
+
+    // (glue-type? x) -- returns 1 if x is a GlueType type former, 0 otherwise.
+    env_set(
+        env,
+        "glue-type?".into(),
+        Expr::Func(Rc::new(|args| {
+            if args.len() != 1 {
+                return Err("glue-type?: expects exactly 1 argument".into());
+            }
+            Ok(Expr::Number(match &args[0] {
+                Expr::GlueType(..) => 1.0,
                 _ => 0.0,
             }))
         })),
