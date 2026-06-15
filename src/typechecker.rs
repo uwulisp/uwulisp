@@ -216,7 +216,7 @@ fn infer_inner(
                 "print" => Ok(ty_any()),
                 "i0" | "i1" => Ok(ty_num()),
                 "refl" => Ok(ty_any()),
-                "pi?" | "sigma?" => Ok(ty_num()),
+                "pi?" | "sigma?" | "path?" => Ok(ty_num()),
                 _ => match env_get(env, s) {
                     Ok(v) => infer_value_type(&v),
                     Err(_) => Err(format!("type error: undefined symbol '{}'", s)),

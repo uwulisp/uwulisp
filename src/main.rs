@@ -85,11 +85,15 @@ fn main() {
         "(papply rp i0)",
         "(papply rp i1)",
         "(papply rp 0.3)",
+        "(path? interp)",
+        "(path? rp)",
+        "(path? 42)",
 
         // ----- pi types -----------------------------------------------------
         "(define arr (pi (x) 0 1))",
         "(pi? arr)",
         "(pi? 42)",
+        "(path? arr)",
         "(define vec-type (pi (n) 0 (* n n)))",
         "(piapply vec-type 3)",
         "(piapply vec-type 5)",

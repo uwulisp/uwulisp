@@ -242,6 +242,21 @@ fn register_pi_types(env: &Env) {
             }))
         })),
     );
+
+    // (path? x) -- returns 1 if x is a Path value, 0 otherwise.
+    env_set(
+        env,
+        "path?".into(),
+        Expr::Func(Rc::new(|args| {
+            if args.len() != 1 {
+                return Err("path?: expects exactly 1 argument".into());
+            }
+            Ok(Expr::Number(match &args[0] {
+                Expr::Path(..) => 1.0,
+                _ => 0.0,
+            }))
+        })),
+    );
 }
 
 fn register_sigma_types(env: &Env) {
