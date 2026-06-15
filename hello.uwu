@@ -1,1 +1,9 @@
-(print 'hello)
+(define base 'torus-base)
+(define p (path (i) base))
+(define q (path (j) base))
+
+(define surface (path (i) (path (j) (if (= i i0) (papply q j) (if (= i i1) (papply q j) (if (= j i0) (papply p i) (if (= j i1) (papply p i) base)))))))
+
+(papply (papply surface 0.5) 0.5)
+
+(papply (papply surface i0) 0.3)
