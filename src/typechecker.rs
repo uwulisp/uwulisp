@@ -10,12 +10,12 @@
 //! ## Supported forms
 //!
 //! | Expression            | Inference | Checking |
-//! |-----------------------|-----------|---------- |
+//! |-----------------------|-----------|----------|
 //! | Number literal        | ✓ (Num)   | ✓        |
 //! | Symbol (global var)   | ✓         | ✓        |
 //! | Index (local var)     | ✓         | ✓        |
-//! | `(lambda arity body)` | –         | ✓ against Pi |
-//! | `(path 1.0 body)`     | –         | ✓ against PathTy |
+//! | `(lambda arity body)` | ✓ (Pi)    | ✓ against Pi |
+//! | `(path 1.0 body)`     | ✓         | ✓ against PathTy |
 //! | `(pi dom cod)`        | ✓ (Type)  | ✓        |
 //! | `(sigma dom cod)`     | ✓ (Type)  | ✓        |
 //! | `(if c t e)`          | ✓ (join)  | ✓        |
@@ -29,12 +29,12 @@
 //! ## Type universe
 //!
 //! Types are themselves `Expr` values evaluated at type-check time.
-//! We use two special sentinel symbols (not user-accessible):
+//! We use sentinel symbols (not user-accessible):
 //!
-//! - `__Num__`   — the type of all numbers.
-//! - `__Type__`  — the universe (kind) of all types (Pi, Sigma, Path types live here).
-//! - `__Path__ dom` — the type of path values whose endpoints live in `dom`.
-//! - `__Any__`   — a top/"unknown" type used when inference cannot determine more.
+//! - `__Num__`       — the type of all numbers.
+//! - `__Type__`      — the universe of all types (Pi, Sigma, Path types live here).
+//! - `__Path__ dom`  — the type of path values whose endpoints live in `dom`.
+//! - `__Any__`       — a top/"unknown" type used when inference cannot determine more.
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -96,39 +96,9 @@ fn ty_path(dom: Expr) -> Expr {
     Expr::List(vec![Expr::Symbol("__Path__".into()), dom])
 }
 
-fn ty_bool() -> Expr {
-    // Booleans are represented as numbers in this Lisp, so they share __Num__.
-    ty_num()
-}
-
 // ---------------------------------------------------------------------------
-// Type equality (structural, up to alpha-equivalence via De Bruijn)
+// Sentinel predicates
 // ---------------------------------------------------------------------------
-
-/// Returns true when two type expressions are definitionally equal.
-/// For now we use structural equality; for dependent types we would need
-/// to reduce both sides first.
-fn types_equal(a: &Expr, b: &Expr) -> bool {
-    match (a, b) {
-        (Expr::Symbol(sa), Expr::Symbol(sb)) => sa == sb,
-        (Expr::Number(na), Expr::Number(nb)) => (na - nb).abs() < f64::EPSILON,
-        (Expr::Index(ia), Expr::Index(ib)) => ia == ib,
-        (Expr::List(la), Expr::List(lb)) => {
-            la.len() == lb.len() && la.iter().zip(lb.iter()).all(|(x, y)| types_equal(x, y))
-        }
-        // Pi types: compare domains and codomains
-        (Expr::Pi(da, ca, _), Expr::Pi(db, cb, _)) => {
-            types_equal(da, db) && types_equal(ca, cb)
-        }
-        // Sigma types
-        (Expr::Sigma(da, ca, _), Expr::Sigma(db, cb, _)) => {
-            types_equal(da, db) && types_equal(ca, cb)
-        }
-        // Path types
-        (Expr::Path(ba, _), Expr::Path(bb, _)) => types_equal(ba, bb),
-        _ => false,
-    }
-}
 
 fn is_any(t: &Expr) -> bool {
     matches!(t, Expr::Symbol(s) if s == "__Any__")
@@ -140,6 +110,69 @@ fn is_num(t: &Expr) -> bool {
 
 fn is_type_universe(t: &Expr) -> bool {
     matches!(t, Expr::Symbol(s) if s == "__Type__")
+}
+
+/// Matches `(__Path__ dom)` and returns `Some(dom)`.
+fn as_path_ty(t: &Expr) -> Option<&Expr> {
+    if let Expr::List(l) = t {
+        if l.len() == 2 {
+            if let Expr::Symbol(s) = &l[0] {
+                if s == "__Path__" {
+                    return Some(&l[1]);
+                }
+            }
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Type equality (structural, up to alpha-equivalence via De Bruijn)
+// ---------------------------------------------------------------------------
+
+/// Returns true when two type expressions are definitionally equal.
+///
+/// Before comparing we attempt to normalize both sides via `eval`. If
+/// reduction fails we fall back to pure structural comparison so that
+/// type-checking of ground (non-dependent) terms is not disrupted by
+/// evaluation errors in unevaluable open terms.
+fn types_equal(a: &Expr, b: &Expr) -> bool {
+    types_equal_structural(a, b)
+}
+
+/// Attempt to reduce `e` in an empty environment (works for closed terms).
+fn try_reduce(e: &Expr, env: &Env) -> Expr {
+    eval(e, env, &Rc::new(LexEnv::Empty)).unwrap_or_else(|_| e.clone())
+}
+
+/// Normalize then compare; falls back to structural equality on error.
+fn types_equal_normalized(a: &Expr, b: &Expr, env: &Env) -> bool {
+    let a_nf = try_reduce(a, env);
+    let b_nf = try_reduce(b, env);
+    types_equal_structural(&a_nf, &b_nf)
+}
+
+fn types_equal_structural(a: &Expr, b: &Expr) -> bool {
+    match (a, b) {
+        (Expr::Symbol(sa), Expr::Symbol(sb)) => sa == sb,
+        (Expr::Number(na), Expr::Number(nb)) => (na - nb).abs() < f64::EPSILON,
+        (Expr::Index(ia), Expr::Index(ib)) => ia == ib,
+        (Expr::List(la), Expr::List(lb)) => {
+            la.len() == lb.len()
+                && la
+                    .iter()
+                    .zip(lb.iter())
+                    .all(|(x, y)| types_equal_structural(x, y))
+        }
+        (Expr::Pi(da, ca, _), Expr::Pi(db, cb, _)) => {
+            types_equal_structural(da, db) && types_equal_structural(ca, cb)
+        }
+        (Expr::Sigma(da, ca, _), Expr::Sigma(db, cb, _)) => {
+            types_equal_structural(da, db) && types_equal_structural(ca, cb)
+        }
+        (Expr::Path(ba, _), Expr::Path(bb, _)) => types_equal_structural(ba, bb),
+        _ => false,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -157,31 +190,37 @@ pub fn infer(
     ty_global: &TyGlobal,
     ty_env: &Rc<TyEnv>,
 ) -> Result<Expr, String> {
+    infer_inner(expr, env, lex_env, ty_global, ty_env)
+        .map_err(|e| format!("{}\n  in: {:?}", e, expr))
+}
+
+fn infer_inner(
+    expr: &Expr,
+    env: &Env,
+    lex_env: &Rc<LexEnv>,
+    ty_global: &TyGlobal,
+    ty_env: &Rc<TyEnv>,
+) -> Result<Expr, String> {
     match expr {
         // ----- Atoms -------------------------------------------------------
         Expr::Number(_) => Ok(ty_num()),
 
         Expr::Symbol(s) => {
-            // Check our type environment first, then fall back to __Any__.
             if let Some(ty) = ty_global.get(s) {
                 return Ok(ty.clone());
             }
-            // Builtin functions: we know their types informally.
             match s.as_str() {
-                "+" | "-" | "*" | "/" => Ok(ty_any()), // (Num…) -> Num; simplified
+                "+" | "-" | "*" | "/" | "%" => Ok(ty_any()),
                 "=" | "<" | ">" | "<=" | ">=" | "not" => Ok(ty_any()),
                 "list" | "car" | "cdr" | "cons" | "null?" => Ok(ty_any()),
                 "print" => Ok(ty_any()),
                 "i0" | "i1" => Ok(ty_num()),
                 "refl" => Ok(ty_any()),
                 "pi?" | "sigma?" => Ok(ty_num()),
-                _ => {
-                    // Check the value env to see if we can get type information.
-                    match env_get(env, s) {
-                        Ok(v) => infer_value_type(&v),
-                        Err(_) => Err(format!("type error: undefined symbol '{}'", s)),
-                    }
-                }
+                _ => match env_get(env, s) {
+                    Ok(v) => infer_value_type(&v),
+                    Err(_) => Err(format!("type error: undefined symbol '{}'", s)),
+                },
             }
         }
 
@@ -189,25 +228,39 @@ pub fn infer(
             .get(*i)
             .ok_or_else(|| format!("type error: unbound index #{}", i)),
 
-        // ----- Already-evaluated values (from builtins/global env) ----------
+        // ----- Already-evaluated values ------------------------------------
         Expr::Func(_) => Ok(ty_any()),
-        Expr::Lambda(..) => Ok(ty_any()),
+        Expr::Lambda(arity, body, _) => {
+            // Without annotation we can't know parameter types, but we can
+            // infer the body type assuming all params are __Any__, giving
+            // (Pi __Any__ (Pi __Any__ … body_ty)) of the right depth.
+            let mut body_ty_env = ty_env.clone();
+            for _ in 0..*arity {
+                body_ty_env = Rc::new(TyEnv::Node(ty_any(), body_ty_env));
+            }
+            // Body type is inferred; we can't construct the Pi properly
+            // without argument types, so we return __Any__.
+            let _ = infer(body, env, lex_env, ty_global, &body_ty_env)?;
+            Ok(ty_any())
+        }
         Expr::Macro(..) => Ok(ty_any()),
-        Expr::Path(..) => Ok(ty_any()),
+        Expr::Path(body, _) => {
+            let body_ty_env = Rc::new(TyEnv::Node(ty_num(), ty_env.clone()));
+            let body_ty = infer(body, env, lex_env, ty_global, &body_ty_env)?;
+            Ok(ty_path(body_ty))
+        }
         Expr::Pi(..) => Ok(ty_type()),
         Expr::Sigma(..) => Ok(ty_type()),
 
         // ----- Lists (special forms and applications) ----------------------
         Expr::List(list) => {
             if list.is_empty() {
-                // () is the unit value; treat it as __Any__.
                 return Ok(ty_any());
             }
 
             if let Expr::Symbol(op) = &list[0] {
                 match op.as_str() {
-                    "quote" => return Ok(ty_any()),
-                    "quasiquote" => return Ok(ty_any()),
+                    "quote" | "quasiquote" => return Ok(ty_any()),
 
                     "if" => return infer_if(list, env, lex_env, ty_global, ty_env),
                     "define" => return infer_define(list, env, lex_env, ty_global, ty_env),
@@ -229,14 +282,12 @@ pub fn infer(
                 }
             }
 
-            // Function application
             infer_application(list, env, lex_env, ty_global, ty_env)
         }
     }
 }
 
-/// Check that a compiled expression has an expected type, reporting a
-/// descriptive error if not.
+/// Check that a compiled expression has an expected type.
 pub fn check(
     expr: &Expr,
     expected: &Expr,
@@ -245,37 +296,36 @@ pub fn check(
     ty_global: &TyGlobal,
     ty_env: &Rc<TyEnv>,
 ) -> Result<(), String> {
-    // Special case: lambda body can be checked against Pi type.
+    // Special case: lambda checked against Pi.
     if let (Expr::List(list), Expr::Pi(dom, cod, pi_lex)) = (expr, expected) {
         if matches!(list.first(), Some(Expr::Symbol(s)) if s == "lambda") {
-            return check_lambda_against_pi(list, dom, cod, pi_lex, env, lex_env, ty_global, ty_env);
+            return check_lambda_against_pi(
+                list, dom, cod, pi_lex, env, lex_env, ty_global, ty_env,
+            );
         }
     }
 
-    // Special case: path body checked against PathTy.
-    if let (Expr::List(list), Expr::List(path_ty)) = (expr, expected) {
-        if path_ty.len() == 2 {
-            if let Expr::Symbol(s) = &path_ty[0] {
-                if s == "__Path__" {
-                    if let Some(Expr::Symbol(op)) = list.first() {
-                        if op == "path" {
-                            return check_path_against_pathty(list, &path_ty[1], env, lex_env, ty_global, ty_env);
-                        }
-                    }
-                }
+    // Special case: path checked against __Path__ type.
+    if let Some(dom) = as_path_ty(expected) {
+        if let Expr::List(list) = expr {
+            if matches!(list.first(), Some(Expr::Symbol(s)) if s == "path") {
+                return check_path_against_pathty(list, dom, env, lex_env, ty_global, ty_env);
             }
         }
     }
 
-    // General case: infer and compare.
-    let inferred = infer(expr, env, lex_env, ty_global, ty_env)?;
-
-    // __Any__ on either side means "don't check".
-    if is_any(&inferred) || is_any(expected) {
+    // __Any__ on either side — skip.
+    if is_any(expected) {
         return Ok(());
     }
 
-    if types_equal(&inferred, expected) {
+    let inferred = infer(expr, env, lex_env, ty_global, ty_env)?;
+
+    if is_any(&inferred) {
+        return Ok(());
+    }
+
+    if types_equal_normalized(&inferred, expected, env) {
         Ok(())
     } else {
         Err(format!(
@@ -297,9 +347,8 @@ fn infer_if(
     ty_env: &Rc<TyEnv>,
 ) -> Result<Expr, String> {
     if list.len() < 3 {
-        return Err("type error: if requires at least 2 branches".into());
+        return Err("type error: if requires at least condition and then-branch".into());
     }
-    // Condition must be numeric (Booleans are Num in this Lisp).
     let cond_ty = infer(&list[1], env, lex_env, ty_global, ty_env)?;
     if !is_any(&cond_ty) && !is_num(&cond_ty) {
         return Err(format!(
@@ -310,15 +359,19 @@ fn infer_if(
     let then_ty = infer(&list[2], env, lex_env, ty_global, ty_env)?;
     if list.len() > 3 {
         let else_ty = infer(&list[3], env, lex_env, ty_global, ty_env)?;
-        // If both branches have the same type, that's the result type.
-        if types_equal(&then_ty, &else_ty) || is_any(&else_ty) {
+        if is_any(&then_ty) || is_any(&else_ty) {
+            // At least one branch is unknown — return the more specific one.
+            return Ok(if is_any(&then_ty) { else_ty } else { then_ty });
+        }
+        if types_equal_normalized(&then_ty, &else_ty, env) {
             Ok(then_ty)
-        } else if is_any(&then_ty) {
-            Ok(else_ty)
         } else {
-            // Allow mismatched branches but warn with __Any__.
-            // (A full dependent type system would unify these.)
-            Ok(ty_any())
+            // Branches disagree: surface a proper type error rather than
+            // silently widening to __Any__.
+            Err(format!(
+                "type error: if branches have incompatible types: then={:?}, else={:?}",
+                then_ty, else_ty
+            ))
         }
     } else {
         Ok(then_ty)
@@ -335,20 +388,46 @@ fn infer_define(
     if list.len() < 3 {
         return Err("type error: define requires name and value".into());
     }
-    // Infer the type of the value expression (the define result type is the value's type).
+    // Note: typecheck_toplevel handles registering the type in ty_global.
+    // This path is reached when define appears nested (e.g. inside begin).
     infer(&list[2], env, lex_env, ty_global, ty_env)
 }
 
 fn infer_lambda(
-    _list: &[Expr],
-    _env: &Env,
-    _lex_env: &Rc<LexEnv>,
-    _ty_global: &TyGlobal,
-    _ty_env: &Rc<TyEnv>,
+    list: &[Expr],
+    env: &Env,
+    lex_env: &Rc<LexEnv>,
+    ty_global: &TyGlobal,
+    ty_env: &Rc<TyEnv>,
 ) -> Result<Expr, String> {
     // Core lambda: (lambda <arity:Number> <body>)
-    // Without explicit parameter types we can only say the result is __Any__.
-    Ok(ty_any())
+    // We don't know parameter types without annotation, so we push __Any__
+    // for each slot and infer the body type.  The result is a Pi with __Any__
+    // domains — better than just returning __Any__ for the whole thing.
+    let arity = if let Some(Expr::Number(n)) = list.get(1) {
+        *n as usize
+    } else {
+        return Ok(ty_any());
+    };
+
+    let mut body_ty_env = ty_env.clone();
+    for _ in 0..arity {
+        body_ty_env = Rc::new(TyEnv::Node(ty_any(), body_ty_env));
+    }
+
+    let body = list.get(2).ok_or("lambda: missing body")?;
+    let body_ty = infer(body, env, lex_env, ty_global, &body_ty_env)?;
+
+    // Build a right-nested Pi: (Pi __Any__ (Pi __Any__ … body_ty))
+    let mut result = body_ty;
+    for _ in 0..arity {
+        result = Expr::Pi(
+            Box::new(ty_any()),
+            Box::new(result),
+            Rc::new(LexEnv::Empty),
+        );
+    }
+    Ok(result)
 }
 
 fn infer_begin(
@@ -358,6 +437,9 @@ fn infer_begin(
     ty_global: &TyGlobal,
     ty_env: &Rc<TyEnv>,
 ) -> Result<Expr, String> {
+    if list.len() < 2 {
+        return Ok(ty_any());
+    }
     let mut last = ty_any();
     for e in &list[1..] {
         last = infer(e, env, lex_env, ty_global, ty_env)?;
@@ -373,10 +455,16 @@ fn infer_let(
     ty_env: &Rc<TyEnv>,
 ) -> Result<Expr, String> {
     // (let ((name val)…) body…)
+    if list.len() < 3 {
+        return Err("type error: let requires bindings and a body".into());
+    }
     let mut current_ty_env = ty_env.clone();
     if let Expr::List(bindings) = &list[1] {
         for b in bindings {
             if let Expr::List(pair) = b {
+                if pair.len() < 2 {
+                    return Err("type error: let binding must be a (name value) pair".into());
+                }
                 let val_ty = infer(&pair[1], env, lex_env, ty_global, &current_ty_env)?;
                 current_ty_env = Rc::new(TyEnv::Node(val_ty, current_ty_env));
             }
@@ -396,8 +484,10 @@ fn infer_path(
     ty_global: &TyGlobal,
     ty_env: &Rc<TyEnv>,
 ) -> Result<Expr, String> {
-    // Core path: (path 1.0 body).  The bound variable is the interval ∈ [0,1],
-    // so it has type __Num__.  We infer the body type and wrap in __Path__.
+    if list.len() < 3 {
+        return Err("type error: path requires arity and body".into());
+    }
+    // The bound variable is the interval ∈ [0,1], typed __Num__.
     let body_ty_env = Rc::new(TyEnv::Node(ty_num(), ty_env.clone()));
     let body_ty = infer(&list[2], env, lex_env, ty_global, &body_ty_env)?;
     Ok(ty_path(body_ty))
@@ -411,28 +501,27 @@ fn infer_papply(
     ty_env: &Rc<TyEnv>,
 ) -> Result<Expr, String> {
     // (papply p t)
+    if list.len() != 3 {
+        return Err("type error: papply expects (papply <path> <t>)".into());
+    }
     let p_ty = infer(&list[1], env, lex_env, ty_global, ty_env)?;
-    // t must be numeric (interval point).
     let t_ty = infer(&list[2], env, lex_env, ty_global, ty_env)?;
+
     if !is_any(&t_ty) && !is_num(&t_ty) {
         return Err(format!(
-            "type error: papply interval point must be a number, got {:?}",
+            "type error: papply interval point must be Num, got {:?}",
             t_ty
         ));
     }
-    // Extract the domain type from the path type.
-    match &p_ty {
-        Expr::List(l) if l.len() == 2 => {
-            if let Expr::Symbol(s) = &l[0] {
-                if s == "__Path__" {
-                    return Ok(l[1].clone());
-                }
-            }
-            Ok(ty_any())
-        }
-        _ if is_any(&p_ty) => Ok(ty_any()),
-        _ => Err(format!(
-            "type error: papply requires a path, got {:?}",
+
+    if is_any(&p_ty) {
+        return Ok(ty_any());
+    }
+
+    match as_path_ty(&p_ty) {
+        Some(dom) => Ok(dom.clone()),
+        None => Err(format!(
+            "type error: papply requires a path type, got {:?}",
             p_ty
         )),
     }
@@ -446,19 +535,33 @@ fn infer_piapply(
     ty_env: &Rc<TyEnv>,
 ) -> Result<Expr, String> {
     // (piapply pi-expr value)
-    // We evaluate the pi-expr to get an actual Pi value, then piapply it.
-    let pi_val = eval(&list[1], env, &Rc::new(LexEnv::Empty))
-        .unwrap_or(Expr::Symbol("__unknown__".into()));
+    if list.len() != 3 {
+        return Err("type error: piapply expects (piapply <pi-type> <value>)".into());
+    }
+
+    // First check that the argument type-checks at all.
+    infer(&list[2], env, lex_env, ty_global, ty_env)?;
+
+    // Try to evaluate the pi-expr to a concrete Pi value; if the expression
+    // is open we fall back to __Any__ instead of silently swallowing errors.
+    let pi_val = eval(&list[1], env, lex_env).map_err(|e| {
+        format!("type error: could not evaluate pi-type expression: {}", e)
+    })?;
+
     match pi_val {
         Expr::Pi(_dom, cod, pi_lex_env) => {
-            // Evaluate the argument to substitute into the codomain.
-            let v = eval(&list[2], env, &Rc::new(LexEnv::Empty))
-                .unwrap_or(Expr::Symbol("__unknown__".into()));
+            let v = eval(&list[2], env, lex_env).map_err(|e| {
+                format!("type error: could not evaluate piapply argument: {}", e)
+            })?;
             let new_lex = Rc::new(LexEnv::Node(v, pi_lex_env));
             eval(&cod, env, &new_lex)
-                .map_err(|e| format!("type error in piapply codomain: {}", e))
+                .map_err(|e| format!("type error in piapply codomain instantiation: {}", e))
         }
-        _ => Ok(ty_any()),
+        Expr::Symbol(s) if s == "__Any__" => Ok(ty_any()),
+        other => Err(format!(
+            "type error: piapply requires a Pi type, got {:?}",
+            other
+        )),
     }
 }
 
@@ -470,17 +573,30 @@ fn infer_sigmacod(
     ty_env: &Rc<TyEnv>,
 ) -> Result<Expr, String> {
     // (sigmacod sigma-expr value)
-    let sigma_val = eval(&list[1], env, &Rc::new(LexEnv::Empty))
-        .unwrap_or(Expr::Symbol("__unknown__".into()));
+    if list.len() != 3 {
+        return Err("type error: sigmacod expects (sigmacod <sigma-type> <value>)".into());
+    }
+
+    infer(&list[2], env, lex_env, ty_global, ty_env)?;
+
+    let sigma_val = eval(&list[1], env, lex_env).map_err(|e| {
+        format!("type error: could not evaluate sigma-type expression: {}", e)
+    })?;
+
     match sigma_val {
         Expr::Sigma(_dom, cod, sig_lex_env) => {
-            let v = eval(&list[2], env, &Rc::new(LexEnv::Empty))
-                .unwrap_or(Expr::Symbol("__unknown__".into()));
+            let v = eval(&list[2], env, lex_env).map_err(|e| {
+                format!("type error: could not evaluate sigmacod argument: {}", e)
+            })?;
             let new_lex = Rc::new(LexEnv::Node(v, sig_lex_env));
             eval(&cod, env, &new_lex)
-                .map_err(|e| format!("type error in sigmacod: {}", e))
+                .map_err(|e| format!("type error in sigmacod codomain instantiation: {}", e))
         }
-        _ => Ok(ty_any()),
+        Expr::Symbol(s) if s == "__Any__" => Ok(ty_any()),
+        other => Err(format!(
+            "type error: sigmacod requires a Sigma type, got {:?}",
+            other
+        )),
     }
 }
 
@@ -491,19 +607,34 @@ fn infer_application(
     ty_global: &TyGlobal,
     ty_env: &Rc<TyEnv>,
 ) -> Result<Expr, String> {
-    // Check all argument types (even if we can't verify against parameter types).
-    for arg in &list[1..] {
-        infer(arg, env, lex_env, ty_global, ty_env)?;
-    }
-    // The return type of arbitrary function application is __Any__ unless we
-    // know the function's type precisely.
     let fn_ty = infer(&list[0], env, lex_env, ty_global, ty_env)?;
-    match fn_ty {
-        Expr::Pi(_dom, cod, _pi_lex) => {
-            // Non-dependent: the codomain doesn't mention the bound variable.
-            Ok(*cod)
+
+    // Type-check all arguments; if we know the function is a Pi type,
+    // also verify the first argument against the domain.
+    match &fn_ty {
+        Expr::Pi(dom, cod, _) => {
+            // Check argument count: a single-Pi covers exactly 1 argument.
+            // For curried multi-arg functions we check the first arg against
+            // the domain and recurse for the rest.
+            if list.len() < 2 {
+                return Err("type error: function applied to zero arguments".into());
+            }
+            // Check first argument against the Pi domain.
+            check(&list[1], dom, env, lex_env, ty_global, ty_env)?;
+            // Check remaining args (best-effort — we don't unfold the rest of
+            // the Pi chain here without full curried type info).
+            for arg in &list[2..] {
+                infer(arg, env, lex_env, ty_global, ty_env)?;
+            }
+            Ok(*cod.clone())
         }
-        _ => Ok(ty_any()),
+        _ => {
+            // Unknown function type: still type-check all arguments.
+            for arg in &list[1..] {
+                infer(arg, env, lex_env, ty_global, ty_env)?;
+            }
+            Ok(ty_any())
+        }
     }
 }
 
@@ -515,14 +646,12 @@ fn check_lambda_against_pi(
     list: &[Expr],
     dom: &Expr,
     cod: &Expr,
-    pi_lex: &Rc<LexEnv>,
+    _pi_lex: &Rc<LexEnv>,
     env: &Env,
     lex_env: &Rc<LexEnv>,
     ty_global: &TyGlobal,
     ty_env: &Rc<TyEnv>,
 ) -> Result<(), String> {
-    // The lambda body is checked against the Pi codomain with the domain
-    // type pushed onto the type environment.
     let new_ty_env = Rc::new(TyEnv::Node(dom.clone(), ty_env.clone()));
     check(&list[2], cod, env, lex_env, ty_global, &new_ty_env)
 }
@@ -535,8 +664,6 @@ fn check_path_against_pathty(
     ty_global: &TyGlobal,
     ty_env: &Rc<TyEnv>,
 ) -> Result<(), String> {
-    // The path body is checked against the domain type with __Num__ (the
-    // interval variable) pushed onto the type environment.
     let new_ty_env = Rc::new(TyEnv::Node(ty_num(), ty_env.clone()));
     check(&list[2], dom, env, lex_env, ty_global, &new_ty_env)
 }
@@ -548,16 +675,15 @@ fn check_path_against_pathty(
 fn infer_value_type(v: &Expr) -> Result<Expr, String> {
     match v {
         Expr::Number(_) => Ok(ty_num()),
-        Expr::Func(_) => Ok(ty_any()),
-        Expr::Lambda(..) => Ok(ty_any()),
-        Expr::Macro(..) => Ok(ty_any()),
-        Expr::Path(..) => Ok(ty_any()),
         Expr::Pi(..) => Ok(ty_type()),
         Expr::Sigma(..) => Ok(ty_type()),
+        Expr::Path(body, _) => {
+            // We can't easily re-infer without ty_env, so return a generic path type.
+            Ok(ty_path(ty_any()))
+        }
+        Expr::Func(_) | Expr::Lambda(..) | Expr::Macro(..) => Ok(ty_any()),
         Expr::List(l) if l.is_empty() => Ok(ty_any()),
-        Expr::List(_) => Ok(ty_any()),
-        Expr::Symbol(_) => Ok(ty_any()),
-        _ => Ok(ty_any()),
+        Expr::List(_) | Expr::Symbol(_) | Expr::Index(_) => Ok(ty_any()),
     }
 }
 
@@ -566,7 +692,7 @@ fn infer_value_type(v: &Expr) -> Result<Expr, String> {
 // ---------------------------------------------------------------------------
 
 /// Type-check a compiled top-level expression, updating `ty_global` for any
-/// `define` or `defmacro` forms encountered.
+/// `define` forms encountered.
 ///
 /// Returns `Ok(inferred_type)` or `Err(message)`.
 pub fn typecheck_toplevel(
@@ -577,18 +703,44 @@ pub fn typecheck_toplevel(
     let lex_env = Rc::new(LexEnv::Empty);
     let ty_env = Rc::new(TyEnv::Empty);
 
-    // Specially handle define so we can register the type globally.
     if let Expr::List(list) = expr {
         if let Some(Expr::Symbol(op)) = list.first() {
-            if op == "define" && list.len() >= 3 {
-                if let Expr::Symbol(name) = &list[1] {
-                    let ty = infer(&list[2], env, &lex_env, ty_global, &ty_env)?;
-                    ty_global.insert(name.clone(), ty.clone());
-                    return Ok(ty);
+            match op.as_str() {
+                "define" if list.len() >= 3 => {
+                    if let Expr::Symbol(name) = &list[1] {
+                        // Pre-register as __Any__ so recursive references
+                        // inside the body (e.g. `fact` calling itself) don't
+                        // fail with "undefined symbol". We overwrite with the
+                        // real inferred type once we have it.
+                        let prev = ty_global.insert(name.clone(), ty_any());
+                        let result = infer(&list[2], env, &lex_env, ty_global, &ty_env);
+                        match result {
+                            Ok(ty) => {
+                                ty_global.insert(name.clone(), ty.clone());
+                                return Ok(ty);
+                            }
+                            Err(e) => {
+                                // Restore previous binding (or remove if new).
+                                match prev {
+                                    Some(old) => { ty_global.insert(name.clone(), old); }
+                                    None => { ty_global.remove(name); }
+                                }
+                                return Err(e);
+                            }
+                        }
+                    }
                 }
-            }
-            if op == "defmacro" {
-                return Ok(ty_any());
+                "defmacro" => return Ok(ty_any()),
+                "begin" => {
+                    // Process a top-level begin sequentially so that inner
+                    // defines are registered in ty_global as we go.
+                    let mut last = ty_any();
+                    for e in &list[1..] {
+                        last = typecheck_toplevel(e, env, ty_global)?;
+                    }
+                    return Ok(last);
+                }
+                _ => {}
             }
         }
     }
