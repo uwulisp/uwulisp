@@ -8,7 +8,7 @@ pub fn eval(expr: &Expr, env: &Env) -> Result<Expr, String> {
     match expr {
         Expr::Number(_) => Ok(expr.clone()),
         Expr::Symbol(s) => env_get(env, s),
-        Expr::Func(_) | Expr::Lambda(..) | Expr::Macro(..) | Expr::Path(..) => Ok(expr.clone()),
+        Expr::Func(_) | Expr::Lambda(..) | Expr::Macro(..) => Ok(expr.clone()),
         Expr::List(list) => {
             if list.is_empty() {
                 return Ok(Expr::List(vec![]));

@@ -14,12 +14,6 @@ pub enum Expr {
     /// Rc cycles and leak memory.
     Lambda(Vec<String>, Box<Expr>, WeakEnv),
     Macro(Vec<String>, Box<Expr>),
-    /// A path abstraction `(path (i) body)`: a function from the interval
-    /// [0,1] to a value, in the spirit of cubical type theory's paths.
-    /// Structurally similar to Lambda but kept distinct so that path
-    /// application (`papply`) can enforce the [0,1] domain.
-    /// Captures a *weak* reference for the same cycle-breaking reason.
-    Path(String, Box<Expr>, WeakEnv),
 }
 
 impl fmt::Debug for Expr {
@@ -40,7 +34,6 @@ impl fmt::Debug for Expr {
             Expr::Func(_) => write!(f, "<builtin>"),
             Expr::Lambda(..) => write!(f, "<lambda>"),
             Expr::Macro(..) => write!(f, "<macro>"),
-            Expr::Path(..) => write!(f, "<path>"),
         }
     }
 }

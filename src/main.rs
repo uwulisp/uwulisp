@@ -1,25 +1,59 @@
+mod builtins;
+mod env;
+mod eval;
+mod expr;
+mod macros;
+mod reader;
 mod cubical;
 
-use crate::cubical::syntax::Term;
-use crate::cubical::typechecker::{infer_closed, check_closed};
-use crate::cubical::eval::eval;
-use crate::cubical::interval::I;
+use env::Env;
+use eval::eval;
+use reader::parse_all;
+
+/// Parses and evaluates each top-level expression in `src`, printing results.
+fn run(src: &str, env: &Env) {
+    match parse_all(src) {
+        Ok(exprs) => {
+            for e in exprs {
+                match eval(&e, env) {
+                    Ok(result) => println!("{} => {:?}", src, result),
+                    Err(err) => println!("{} => Error: {}", src, err),
+                }
+            }
+        }
+        Err(err) => println!("{} => Parse error: {}", src, err),
+    }
+}
 
 fn main() {
-    // 1. 인터벌 표현식 만들기: 0 OR (NOT 0)
-    // Join( 0, Neg(0) ) -> 수학적으로 항상 1(참)이 되어야 합니다.
-    let target_expr = I::Join(
-        Box::new(I::I0),
-        Box::new(I::Neg(Box::new(I::I0)))
-    ); //
+    let env = builtins::global_env();
 
-    // 2. Term으로 감싸기
-    let interval_term = Term::TInterval(target_expr); //
+    let exprs = vec![
+        "(define square (lambda (x) (* x x)))",
+        "(square 5)",
+        "(define fact (lambda (n) (if (< n 1) 1 (* n (fact (- n 1))))))",
+        "(fact 10)",
+        "(let ((a 3) (b 4)) (+ (* a a) (* b b)))",
+        // macro: unless
+        "(defmacro unless (cond then) (list 'if (list 'not cond) then 0))",
+        "(unless 0 (+ 1 2))", // cond is 0 (false) -> evaluates then -> 3
+        "(unless 1 (+ 1 2))", // cond is 1 (true)  -> 0
+        // macro: my-or
+        "(defmacro my-or (a b) (list 'if a a b))",
+        "(my-or 0 42)",
+        "(my-or 7 42)",
+        // quasiquote / unquote
+        "(define x 10)",
+        "(quasiquote (a b (unquote x)))",
+        "(define lst (list 1 2 3))",
+        "(quasiquote (start (unquote-splicing lst) end))",
+        // quote sugar
+        "'(1 2 3)",
+        "(car '(1 2 3))",
+        "(cdr '(1 2 3))",
+    ];
 
-    println!("--- 큐비컬 인터벌 TUP 테스트 ---");
-    
-    // 3. 계산 수행
-    let result = eval(&interval_term); //
-
-    println!("계산된 인터벌 결과: {:?}", result);
+    for src in exprs {
+        run(src, &env);
+    }
 }
