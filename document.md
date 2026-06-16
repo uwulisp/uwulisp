@@ -222,6 +222,11 @@ Creates a path value: a function `I → A` that binds the interval variable `i`
 (De Bruijn index `#0` in the compiled body). Analogous to a `lambda` of arity 1
 whose domain is the interval `[0, 1]`.
 
+The arity argument must be the literal `1.0`; any other value is an error.
+Free variables in `body` are captured from the current lexical environment at
+construction time; the interval variable `i` is pushed at index `0` by
+`papply` when the path is applied.
+
 ---
 
 ### `papply`
@@ -232,6 +237,8 @@ whose domain is the interval `[0, 1]`.
 ```
 
 Applies a path at interval point `t`, which must be a number in `[0, 1]`.
+Any value in the closed interval is accepted — including interior points such as
+`0.5` — making composition, transport, and `hcomp` possible.
 Reduces to `body[i := t]`. The endpoints recover the path's boundary:
 
 ```
@@ -293,6 +300,11 @@ that `x` is equal to itself.
 
 ```
 
+**Implementation note:** `x` is captured at De Bruijn index `1` in the path's
+lexical environment (not quoted). `papply` pushes the interval value at index
+`0`, shifting `x` to index `1`; the body `#1` then retrieves it correctly at
+every interval point.
+
 ---
 
 ### Interval constants (builtins)
@@ -300,6 +312,70 @@ that `x` is equal to itself.
 ```
 i0   ; = 0.0, the left  endpoint of I
 i1   ; = 1.0, the right endpoint of I
+
+```
+
+---
+
+### `symm` — Path Reversal
+
+```
+(symm p)
+
+```
+
+Given `p : Path a b`, returns a path `Path b a` traversing `p` in reverse.
+
+```
+(papply (symm p) t)  ≡  (papply p (- 1 t))
+
+```
+
+---
+
+### `trans` — Path Composition
+
+```
+(trans p q)
+
+```
+
+Given `p : Path a b` and `q : Path b c`, returns a path `Path a c` that
+concatenates them. Uses double-speed scheduling: the first half of `[0, 1]`
+runs `p` and the second half runs `q`.
+
+```
+(papply (trans p q) t)  ≡  (papply p (* 2 t))        when t < 0.5
+                        ≡  (papply q (- (* 2 t) 1))   when t ≥ 0.5
+
+```
+
+The endpoints satisfy `(papply (trans p q) i0) ≡ a` and
+`(papply (trans p q) i1) ≡ c`.
+
+---
+
+### `cong` — Congruence (`ap`)
+
+```
+(cong f p)
+
+```
+
+Given a function `f : A → B` and `p : Path a b` in `A`, returns a path
+`Path (f a) (f b)` in `B`. This is the standard `ap`/congruence principle.
+
+```
+(papply (cong f p) t)  ≡  (f (papply p t))
+
+```
+
+```uwu
+(define double (lambda (x) (* x 2)))
+(define p (path (i) (+ i 1)))          ; path from 1 to 2
+(papply (cong double p) i0)             ; => 2.0  (double of p(0) = 1)
+(papply (cong double p) i1)             ; => 4.0  (double of p(1) = 2)
+(papply (cong double p) 0.5)            ; => 3.0  (double of p(0.5) = 1.5)
 
 ```
 
@@ -541,7 +617,7 @@ All comparison operators return `1.0` for true and `0.0` for false.
 
 | Form | Description |
 | --- | --- |
-| `(print x ...)` | Prints all arguments with `{:?}` formatting, then a newline. Returns `()`. |
+| `(print x ...)` | Prints all arguments with `{}` (Display) formatting, then a newline. Returns `()`. |
 | `(read)` | Reads a line of input from standard input, parses it as a single S-expression, and returns it. |
 | `(write x)` | Prints the representation of `x` to standard output without a newline, and flushes output. Returns `()`. |
 | `(newline)` | Prints a newline to standard output. Returns `()`. |
@@ -600,6 +676,17 @@ Evaluation uses two parallel environments:
 
 `LexEnv::get(i)` walks `i` steps down the linked list and returns the value
 at that depth. Extended by `lambda` application, `path`/`pi`/`sigma`/`let`/`letrec`.
+
+Two helpers are available for the global environment:
+
+| Function | Signature | Behaviour |
+| --- | --- | --- |
+| `env_get` | `(&Env, &str) -> Result<Expr, String>` | Returns the value or an *undefined symbol* error. |
+| `env_get_opt` | `(&Env, &str) -> Option<Expr>` | Returns `None` instead of an error when the name is absent. Prefer this for optional lookups (e.g. macro dispatch). |
+
+`make_env()` (re-exported from `env.rs`) is an alias for `new_env()` intended
+for use in cubical closures that need a throwaway global env to satisfy the
+`eval` signature when evaluating closed path bodies.
 
 ---
 
@@ -670,6 +757,22 @@ The interpreter supports multiple execution modes:
 (let ((x 3)
       (y (* x 2)))   ; x is already bound here
   (+ x y))           ; => 9.0
+
+; symm: reverse a path
+(define p (path (i) (+ i 1)))    ; path from 1 to 2
+(papply (symm p) i0)              ; => 2.0
+(papply (symm p) i1)              ; => 1.0
+
+; trans: concatenate two paths
+(define p1 (path (i) i))          ; path from 0 to 1
+(define p2 (path (i) (+ i 1)))    ; path from 1 to 2
+(papply (trans p1 p2) i0)          ; => 0.0
+(papply (trans p1 p2) 0.5)         ; => 1.0
+(papply (trans p1 p2) i1)          ; => 2.0
+
+; cong: apply a function pointwise along a path
+(define double (lambda (x) (* x 2)))
+(papply (cong double p1) 0.5)      ; => 1.0  (double of 0.5)
 
 ; funext: path between definitionally equal functions
 (define add0-path
