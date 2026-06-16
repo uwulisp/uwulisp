@@ -56,31 +56,57 @@ impl LexEnv {
     }
 }
 
-impl fmt::Debug for Expr {
+// ---------------------------------------------------------------------------
+// Display — user-facing printer (what the REPL shows)
+//
+// Prints values as readable S-expressions.  Internal details like De Bruijn
+// indices, arities, and captured environments are hidden; the user sees only
+// the value's observable shape.
+// ---------------------------------------------------------------------------
+impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Expr::Symbol(s) => write!(f, "{}", s),
-            Expr::Index(i) => write!(f, "#{}", i),
-            Expr::Number(n) => write!(f, "{}", n),
+            Expr::Symbol(s)    => write!(f, "{}", s),
+            Expr::Index(i)     => write!(f, "#{}", i),   // should not appear in fully-evaluated output
+            Expr::Number(n)    => {
+                // Print integers without a decimal point for readability.
+                if n.fract() == 0.0 && n.abs() < 1e15 {
+                    write!(f, "{}", *n as i64)
+                } else {
+                    write!(f, "{}", n)
+                }
+            }
             Expr::List(l) => {
                 write!(f, "(")?;
                 for (i, e) in l.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, " ")?;
-                    }
-                    write!(f, "{:?}", e)?;
+                    if i > 0 { write!(f, " ")?; }
+                    write!(f, "{}", e)?;
                 }
                 write!(f, ")")
             }
-            Expr::Func(_) => write!(f, "<builtin>"),
-            Expr::Lambda(arity, _, _) => write!(f, "<lambda/{}>", arity),
-            Expr::Macro(..) => write!(f, "<macro>"),
-            Expr::Path(..) => write!(f, "<path>"),
-            Expr::Pi(dom, cod, _) => write!(f, "(Π {:?} {:?})", dom, cod),
-            Expr::Sigma(dom, cod, _) => write!(f, "(Σ {:?} {:?})", dom, cod),
-            Expr::GlueType(base, equiv) => write!(f, "(GlueType {:?} {:?})", base, equiv),
-            Expr::Glue(val, equiv) => write!(f, "(glue {:?} {:?})", val, equiv),
+            Expr::Func(_)              => write!(f, "<builtin>"),
+            Expr::Lambda(arity, _, _)  => write!(f, "<lambda/{}>", arity),
+            Expr::Macro(..)            => write!(f, "<macro>"),
+            Expr::Path(..)             => write!(f, "<path>"),
+            Expr::Pi(dom, cod, _)      => write!(f, "(Π {} {})", dom, cod),
+            Expr::Sigma(dom, cod, _)   => write!(f, "(Σ {} {})", dom, cod),
+            Expr::GlueType(base, eq)   => write!(f, "(GlueType {} {})", base, eq),
+            Expr::Glue(val, eq)        => write!(f, "(glue {} {})", val, eq),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Debug — internal printer (used in error messages and {:?} formatting)
+//
+// Identical structure to Display but uses {:?} recursively so it is always
+// available without the Display bound, and can diverge later if we want more
+// internal detail in debug builds.
+// ---------------------------------------------------------------------------
+impl fmt::Debug for Expr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // Delegate to Display for now; add more internal detail here if needed.
+        write!(f, "{}", self)
     }
 }
 
@@ -104,11 +130,8 @@ pub fn is_sentinel_symbol(s: &str) -> bool {
         || s == "__Glue__"
 }
 
-/// Shared, mutable lexical environment (strong reference).
-
+/// Shared, mutable global environment (strong reference).
 pub type Env = Rc<std::cell::RefCell<EnvData>>;
-
-
 
 pub struct EnvData {
     pub vars: HashMap<String, Expr>,
@@ -120,11 +143,17 @@ pub fn new_env() -> Env {
     }))
 }
 
+/// Look up a name in the global environment, returning an error if absent.
 pub fn env_get(env: &Env, name: &str) -> Result<Expr, String> {
-    if let Some(v) = env.borrow().vars.get(name) {
-        return Ok(v.clone());
-    }
-    Err(format!("undefined symbol: {}", name))
+    env_get_opt(env, name).ok_or_else(|| format!("undefined symbol: {}", name))
+}
+
+/// Look up a name in the global environment, returning `None` if absent.
+///
+/// Prefer this over `env_get` when absence is not an error (e.g. optional
+/// macro dispatch, feature detection).
+pub fn env_get_opt(env: &Env, name: &str) -> Option<Expr> {
+    env.borrow().vars.get(name).cloned()
 }
 
 pub fn env_set(env: &Env, name: String, val: Expr) {

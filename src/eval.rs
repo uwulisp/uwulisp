@@ -414,12 +414,48 @@ fn build_letrec_env(
 // readability since they are not in a tail position and return directly)
 // ---------------------------------------------------------------------------
 
-/// (path 1.0 body)
+/// (path <arity> <body>)
+///
+/// Constructs a Path value whose body is an expression in which De Bruijn
+/// index 0 refers to the interval variable `i ∈ [0,1]`.
+///
+/// `<arity>` must be the number literal `1.0` (one interval dimension).
+/// Multidimensional paths are not supported by this form; compose `path`
+/// applications instead.
+///
+/// The body is stored unevaluated together with the current lexical
+/// environment, so that free variables in the body are captured correctly.
+/// eval_papply later pushes the concrete interval value at index 0 before
+/// evaluating the body.
 fn eval_path(list: &[Expr], _env: &Env, lex_env: &Rc<LexEnv>) -> Result<Expr, String> {
+    if list.len() != 3 {
+        return Err("path: expected (path <arity> <body>)".into());
+    }
+    // Validate that the caller supplied arity = 1 (one interval dimension).
+    match &list[1] {
+        Expr::Number(n) if *n == 1.0 => {}
+        other => return Err(format!(
+            "path: arity must be 1.0 (one interval dimension), got {:?}",
+            other
+        )),
+    }
     Ok(Expr::Path(Box::new(list[2].clone()), lex_env.clone()))
 }
 
 /// (papply p t)
+///
+/// Applies a path `p : Path A a b` to an interval point `t ∈ [0,1]`,
+/// returning the value of the path at that point.
+///
+/// Interval convention (De Bruijn):
+///   When evaluating a non-Func path body the interval value `t` is pushed
+///   onto the front of the path's captured lexical environment, so that
+///   De Bruijn index 0 inside the body refers to the interval variable.
+///   Any values the path closed over at construction time are shifted up
+///   by one (index 1, 2, …).
+///
+/// Func-based bodies (produced by `funext`) receive `t` as their sole
+/// argument instead, bypassing De Bruijn indexing entirely.
 fn eval_papply(list: &[Expr], env: &Env, lex_env: &Rc<LexEnv>) -> Result<Expr, String> {
     if list.len() != 3 {
         return Err("papply: expected (papply <path> <interval-point>)".into());
@@ -431,6 +467,9 @@ fn eval_papply(list: &[Expr], env: &Env, lex_env: &Rc<LexEnv>) -> Result<Expr, S
         Expr::Number(n) => *n,
         other => return Err(format!("papply: interval point must be a number, got {:?}", other)),
     };
+    // Accept any point in the closed interval [0, 1].
+    // Cubical paths must be evaluable at interior points (e.g. for
+    // composition, transport, and hcomp), not just at the endpoints.
     if !(0.0..=1.0).contains(&t_val) {
         return Err(format!(
             "papply: interval point {} out of bounds, expected [0,1]",

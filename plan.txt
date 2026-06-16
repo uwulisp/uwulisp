@@ -1,5 +1,10 @@
 update
 
+add universe type
+add kan operation
+
+final goal calculate univalence axiom
+
 add import
 add comment support
 
