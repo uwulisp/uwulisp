@@ -11,6 +11,9 @@ pub enum Token {
     Quote,
     Str(String),
     Atom(String),
+    Backtick,
+    Unquote,
+    UnquoteSplice,
 }
 
 /// Scans source text into a token stream.
@@ -70,9 +73,7 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, String> {
                         }
                         '\\' => {
                             i += 1;
-                            let escaped = *chars
-                                .get(i)
-                                .ok_or("unterminated string literal")?;
+                            let escaped = *chars.get(i).ok_or("unterminated string literal")?;
                             s.push(match escaped {
                                 'n' => '\n',
                                 't' => '\t',
@@ -92,6 +93,19 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, String> {
                     }
                 }
                 tokens.push(Token::Str(s));
+            }
+            '`' => {
+                tokens.push(Token::Backtick);
+                i += 1;
+            }
+            ',' => {
+                i += 1;
+                if chars.get(i) == Some(&'@') {
+                    tokens.push(Token::UnquoteSplice);
+                    i += 1;
+                } else {
+                    tokens.push(Token::Unquote);
+                }
             }
             _ => {
                 // Bare atom (symbol or number): read until the next
@@ -151,6 +165,21 @@ pub fn parse(tokens: &[Token], pos: &mut usize) -> Result<Expr, String> {
             } else {
                 Ok(Expr::Symbol(s))
             }
+        }
+        Token::Backtick => {
+            let inner = parse(tokens, pos)?;
+            Ok(Expr::List(vec![Expr::Symbol("quasiquote".into()), inner]))
+        }
+        Token::Unquote => {
+            let inner = parse(tokens, pos)?;
+            Ok(Expr::List(vec![Expr::Symbol("unquote".into()), inner]))
+        }
+        Token::UnquoteSplice => {
+            let inner = parse(tokens, pos)?;
+            Ok(Expr::List(vec![
+                Expr::Symbol("unquote-splicing".into()),
+                inner,
+            ]))
         }
     }
 }

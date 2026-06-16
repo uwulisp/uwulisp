@@ -1,5 +1,5 @@
-use crate::env::{env_get, env_set, new_env, Env};
-use crate::expr::{downgrade, is_truthy, upgrade, Expr};
+use crate::env::{Env, env_get, env_set, new_env};
+use crate::expr::{Expr, downgrade, is_truthy, upgrade};
 use crate::macros::{eval_quasiquote, expand_macro};
 use crate::reader::parse_params;
 
@@ -22,13 +22,19 @@ pub fn eval(expr: &Expr, env: &Env) -> Result<Expr, String> {
                 match op.as_str() {
                     "quote" => {
                         if list.len() != 2 {
-                            return Err(format!("quote expects 1 argument, got {}", list.len() - 1));
+                            return Err(format!(
+                                "quote expects 1 argument, got {}",
+                                list.len() - 1
+                            ));
                         }
                         return Ok(list[1].clone());
                     }
                     "quasiquote" => {
                         if list.len() != 2 {
-                            return Err(format!("quasiquote expects 1 argument, got {}", list.len() - 1));
+                            return Err(format!(
+                                "quasiquote expects 1 argument, got {}",
+                                list.len() - 1
+                            ));
                         }
                         return eval_quasiquote(&list[1], env, 1);
                     }
@@ -45,7 +51,8 @@ pub fn eval(expr: &Expr, env: &Env) -> Result<Expr, String> {
                         // If `op` names a macro, expand (with raw, unevaluated
                         // argument expressions) and evaluate the result.
                         if let Ok(Expr::Macro(params, body)) = env_get(env, op) {
-                            let expanded = expand_macro(&params, &body, &list[1..])?;
+                            let substituted = expand_macro(&params, &body, &list[1..])?;
+                            let expanded = eval(&substituted, env)?;
                             return eval(&expanded, env);
                         }
                     }
@@ -54,8 +61,7 @@ pub fn eval(expr: &Expr, env: &Env) -> Result<Expr, String> {
 
             // Normal function application: evaluate operator and operands.
             let func = eval(&list[0], env)?;
-            let args: Result<Vec<Expr>, String> =
-                list[1..].iter().map(|e| eval(e, env)).collect();
+            let args: Result<Vec<Expr>, String> = list[1..].iter().map(|e| eval(e, env)).collect();
             apply(func, &args?)
         }
     }
@@ -107,7 +113,11 @@ fn eval_lambda(list: &[Expr], env: &Env) -> Result<Expr, String> {
     let params = parse_params(&list[1])?;
     // Capture a *weak* reference so that storing the lambda back into the
     // same env (e.g. `define`) does not create a strong Rc cycle.
-    Ok(Expr::Lambda(params, Box::new(list[2].clone()), downgrade(env)))
+    Ok(Expr::Lambda(
+        params,
+        Box::new(list[2].clone()),
+        downgrade(env),
+    ))
 }
 
 /// (defmacro name (params...) body)
