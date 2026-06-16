@@ -713,6 +713,7 @@ Immediate values must fit in a signed 32-bit integer.
 | `mov`    | dst src          | Move                     |
 | `push`   | src              | Push onto stack          |
 | `pop`    | dst              | Pop from stack           |
+| `lea`    | dst src          | load effective address   |
 
 **Arithmetic**
 
