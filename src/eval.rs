@@ -440,8 +440,20 @@ fn eval_papply(list: &[Expr], env: &Env, lex_env: &Rc<LexEnv>) -> Result<Expr, S
 
     match p {
         Expr::Path(body, penv) => {
-            let new_env = Rc::new(LexEnv::Node(Expr::Number(t_val), penv));
-            eval(&body, env, &new_env)
+            match *body {
+                // Func-based path bodies (e.g. from funext) store a closure
+                // that expects the interval value as its direct argument,
+                // rather than reading it from the lexical environment.
+                // Calling eval() on Expr::Func is a no-op (self-evaluating),
+                // so we must call the function directly here.
+                Expr::Func(f) => f(&[Expr::Number(t_val)]),
+                // Ordinary path body: an expression with the interval variable
+                // at De Bruijn index 0.  Push the interval value and evaluate.
+                other => {
+                    let new_env = Rc::new(LexEnv::Node(Expr::Number(t_val), penv));
+                    eval(&other, env, &new_env)
+                }
+            }
         }
         other => Err(format!("papply: not a path: {:?}", other)),
     }
@@ -508,38 +520,69 @@ fn eval_defmacro(list: &[Expr], env: &Env, _lex_env: &Rc<LexEnv>) -> Result<Expr
 }
 
 /// (funext f g p)
+///
+/// Constructs a path between two functions `f` and `g` given a pointwise
+/// homotopy `p : Π x, Path (f x) (g x)`.
+///
+/// Returns `Expr::Path(Func(…), _)` where the body `Func` accepts the
+/// interval value `i` directly (called by the `Expr::Func` arm in
+/// `eval_papply`) and returns a function-valued fiber at that point:
+///
+///   (papply (funext f g p) i0)       =>  a function ≡ f   (every x maps to f x)
+///   (papply (funext f g p) i1)       =>  a function ≡ g   (every x maps to g x)
+///   ((papply (funext f g p) i0) x)   =>  f x
+///   ((papply (funext f g p) i1) x)   =>  g x
 fn eval_funext(list: &[Expr], env: &Env, lex_env: &Rc<LexEnv>) -> Result<Expr, String> {
     if list.len() != 4 {
         return Err("funext: expected (funext f g p)".into());
     }
     let p = eval(&list[3], env, lex_env)?;
-
-    let p_clone = p.clone();
     let env_clone = env.clone();
-    let body_fn = Expr::Func(Rc::new(move |args: &[Expr]| -> Result<Expr, String> {
+
+    // The path body is an Expr::Func closure that receives the interval
+    // point `i` ∈ [0,1] as its sole argument (called directly by
+    // eval_papply — see the Expr::Func arm added there).  It returns
+    // another Func representing the function at that fiber, which:
+    //   • at i=0 computes f(x)
+    //   • at i=1 computes g(x)
+    //   • at intermediate i evaluates p(x) at that point
+    let p_for_body = p.clone();
+    let env_for_body = env_clone.clone();
+    let body_func = Expr::Func(Rc::new(move |args: &[Expr]| -> Result<Expr, String> {
+        // args[0] is the interval point i ∈ [0,1].
         let i = args[0].clone();
-        let p_inner = p_clone.clone();
-        let env_inner = env_clone.clone();
-        let i_inner = i.clone();
-        Ok(Expr::Func(Rc::new(
-            move |xargs: &[Expr]| -> Result<Expr, String> {
-                let x = xargs[0].clone();
-                let px = apply(p_inner.clone(), &[x], &env_inner)?;
-                match px {
-                    Expr::Path(body, penv) => {
-                        let new_lex = Rc::new(LexEnv::Node(i_inner.clone(), penv));
-                        eval(&body, &env_inner, &new_lex)
-                    }
-                    other => Err(format!(
-                        "funext: pointwise homotopy did not return a path, got {:?}",
-                        other
-                    )),
+        let p_captured = p_for_body.clone();
+        let env_captured = env_for_body.clone();
+        // Return a Lambda of arity 1 over x.
+        // We use Expr::Func here too so the body doesn't require De Bruijn
+        // compilation: the closure captures p and i directly.
+        Ok(Expr::Func(Rc::new(move |xargs: &[Expr]| -> Result<Expr, String> {
+            if xargs.is_empty() {
+                return Err("funext: inner lambda called with no arguments".into());
+            }
+            let x = xargs[0].clone();
+            // Apply the pointwise homotopy p to x, obtaining a Path.
+            let px = apply(p_captured.clone(), &[x], &env_captured)?;
+            match px {
+                Expr::Path(body, penv) => {
+                    // Evaluate the path body at interval point i.
+                    let new_lex = Rc::new(LexEnv::Node(i.clone(), penv));
+                    eval(&body, &env_captured, &new_lex)
                 }
-            },
-        )))
+                // p x returned a Func-based path body (nested funext, etc.) —
+                // call it directly with i.
+                Expr::Func(f) => f(&[i.clone()]),
+                other => Err(format!(
+                    "funext: pointwise homotopy did not return a path, got {:?}",
+                    other
+                )),
+            }
+        })))
     }));
 
-    Ok(Expr::Path(Box::new(body_fn), lex_env.clone()))
+    // Wrap body_func in a Path.  eval_papply will detect Expr::Func path
+    // bodies and call them with the interval value directly (see eval_papply).
+    Ok(Expr::Path(Box::new(body_func), lex_env.clone()))
 }
 
 /// (glue-type base equiv)

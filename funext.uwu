@@ -6,3 +6,5 @@
 (papply add0-path i0)   
 
 (papply add0-path i1)   
+
+((papply add0-path i0) 10)
