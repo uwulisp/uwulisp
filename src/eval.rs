@@ -7,6 +7,10 @@ use crate::reader::parse_params;
 pub fn eval(expr: &Expr, env: &Env) -> Result<Expr, String> {
     match expr {
         Expr::Number(_) => Ok(expr.clone()),
+        Expr::Str(_) => Ok(expr.clone()),
+        // CubicalTerm values are opaque atoms — they self-evaluate just like
+        // numbers and are only inspected by the cubical builtins.
+        Expr::CubicalTerm(_) => Ok(expr.clone()),
         Expr::Symbol(s) => env_get(env, s),
         Expr::Func(_) | Expr::Lambda(..) | Expr::Macro(..) => Ok(expr.clone()),
         Expr::List(list) => {

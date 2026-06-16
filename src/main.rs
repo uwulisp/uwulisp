@@ -9,51 +9,44 @@ mod cubical;
 use env::Env;
 use eval::eval;
 use reader::parse_all;
+use std::fs;  // 파일을 읽기 위해 추가
+use std::process;
 
-/// Parses and evaluates each top-level expression in `src`, printing results.
+/// 소스 코드 전체를 받아서 파싱한 뒤, 각 탑레벨 표현식을 차례대로 평가합니다.
 fn run(src: &str, env: &Env) {
     match parse_all(src) {
         Ok(exprs) => {
             for e in exprs {
                 match eval(&e, env) {
-                    Ok(result) => println!("{} => {:?}", src, result),
-                    Err(err) => println!("{} => Error: {}", src, err),
+                    Ok(result) => println!("=> {:?}", result), // 출력 형식을 조금 깔끔하게 다듬었습니다.
+                    Err(err) => println!("Evaluation Error: {}", err),
                 }
             }
         }
-        Err(err) => println!("{} => Parse error: {}", src, err),
+        Err(err) => println!("Parse error: {}", err),
     }
 }
 
 fn main() {
-    let env = builtins::global_env();
-
-    let exprs = vec![
-        "(define square (lambda (x) (* x x)))",
-        "(square 5)",
-        "(define fact (lambda (n) (if (< n 1) 1 (* n (fact (- n 1))))))",
-        "(fact 10)",
-        "(let ((a 3) (b 4)) (+ (* a a) (* b b)))",
-        // macro: unless
-        "(defmacro unless (cond then) (list 'if (list 'not cond) then 0))",
-        "(unless 0 (+ 1 2))", // cond is 0 (false) -> evaluates then -> 3
-        "(unless 1 (+ 1 2))", // cond is 1 (true)  -> 0
-        // macro: my-or
-        "(defmacro my-or (a b) (list 'if a a b))",
-        "(my-or 0 42)",
-        "(my-or 7 42)",
-        // quasiquote / unquote
-        "(define x 10)",
-        "(quasiquote (a b (unquote x)))",
-        "(define lst (list 1 2 3))",
-        "(quasiquote (start (unquote-splicing lst) end))",
-        // quote sugar
-        "'(1 2 3)",
-        "(car '(1 2 3))",
-        "(cdr '(1 2 3))",
-    ];
-
-    for src in exprs {
-        run(src, &env);
+    // 1. 명령행 인자 처리 (프로그램 이름 제외하고 파일 경로가 들어왔는지 확인)
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() < 2 {
+        eprintln!("사용법: cargo run -- <파일경로>");
+        process::exit(1);
     }
+    
+    let file_path = &args[1];
+
+    // 2. 파일 읽기
+    let src = match fs::read_to_string(file_path) {
+        Ok(content) => content,
+        Err(err) => {
+            eprintln!("파일을 읽는 중 오류가 발생했습니다 '{}': {}", file_path, err);
+            process::exit(1);
+        }
+    };
+
+    // 3. 글로벌 환경 초기화 및 실행
+    let env = builtins::global_env();
+    run(&src, &env);
 }
