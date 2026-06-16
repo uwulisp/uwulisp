@@ -251,7 +251,7 @@ Errors if `start > end` or either index is out of range.
 ## Miscellaneous
 
 ### `print`
-Prints each argument separated by spaces, followed by a newline, then returns an empty list.
+Prints each argument followed by a space, then a newline, then returns an empty list. Note that a trailing space is emitted after the last argument (not just between arguments).
 
 ```
 (print x1 x2 ...)  →  ()
@@ -307,7 +307,7 @@ The meet (minimum / conjunction) of two interval expressions, normalised to DNF 
 (interval-meet a b)  →  TCube(dnf)
 ```
 
-Both arguments must be `TInterval` terms. Passing a pre-normalised `TCube` is an error; construct with `interval-var`, `interval-zero`, or `interval-one` first.
+Both arguments must be `TInterval` terms (i.e. produced by `interval-var`, `interval-zero`, or `interval-one`). Passing a pre-normalised `TCube` is an error.
 
 ---
 
@@ -318,7 +318,7 @@ The join (maximum / disjunction) of two interval expressions, normalised to DNF 
 (interval-join a b)  →  TCube(dnf)
 ```
 
-Same constraints as `interval-meet`.
+Both arguments must be `TInterval` terms. Passing a pre-normalised `TCube` is an error.
 
 ---
 
@@ -329,18 +329,7 @@ The negation of an interval expression, normalised to DNF immediately.
 (interval-neg a)  →  TCube(dnf)
 ```
 
-Same constraints as `interval-meet`.
-
----
-
-#### `interval-type`
-The interval type constant `𝕀` itself (not a term of the interval).
-
-```
-(interval-type)  →  TIntervalTy
-```
-
-No arguments.
+Argument must be a `TInterval` term. Passing a pre-normalised `TCube` is an error.
 
 ---
 
@@ -365,6 +354,17 @@ A universe at the given level.
 ```
 
 `level` is cast to `i32`.
+
+---
+
+#### `interval-type`
+The interval type constant `𝕀` itself (not a term of the interval).
+
+```
+(interval-type)  →  TIntervalTy
+```
+
+No arguments.
 
 ---
 
@@ -662,3 +662,100 @@ Tests definitional equality of two closed cubical terms.
 ```
 
 Returns `1.0` if `t` and `u` are definitionally equal, `0.0` otherwise.
+
+---
+
+## Assembler
+
+### `asm`
+Assembles and JIT-executes a list of x86-64 instructions, returning the value left in `RAX` as a number.
+
+```
+(asm instructions)  →  Number
+```
+
+`instructions` must be a list of instruction lists. Each instruction list begins with a mnemonic symbol followed by its operands. The assembled machine code is written to executable memory and called immediately; the `i64` value in `RAX` at the time of `ret` is returned as a Lisp `Number` (cast to `f64`).
+
+**Example:**
+
+```lisp
+(asm '(
+  (mov rax 0)
+  (label loop)
+  (add rax 1)
+  (cmp rax 5)
+  (jne loop)
+  (ret)
+))
+; → 5.0
+```
+
+#### Operand forms
+
+| Form                  | Syntax                    | Example           |
+|-----------------------|---------------------------|-------------------|
+| Register              | symbol                    | `rax`, `r8`       |
+| Immediate (i32)       | number                    | `42`, `-1`        |
+| Memory (base + disp)  | `(mem <reg> <disp>)`      | `(mem rsp -8)`    |
+
+Immediate values must fit in a signed 32-bit integer.
+
+#### Supported registers
+
+`rax`, `rcx`, `rdx`, `rbx`, `rsp`, `rbp`, `rsi`, `rdi`, `r8`–`r15` (case-insensitive).
+
+#### Supported instructions
+
+**Data movement**
+
+| Mnemonic | Operands         | Description              |
+|----------|------------------|--------------------------|
+| `mov`    | dst src          | Move                     |
+| `push`   | src              | Push onto stack          |
+| `pop`    | dst              | Pop from stack           |
+
+**Arithmetic**
+
+| Mnemonic | Operands         | Description                        |
+|----------|------------------|------------------------------------|
+| `add`    | dst src          | Add                                |
+| `sub`    | dst src          | Subtract                           |
+| `imul`   | dst src          | Signed multiply (two-operand)      |
+| `mul`    | src              | Unsigned multiply (`rax × src`)    |
+| `div`    | src              | Unsigned divide (`rax ÷ src`)      |
+
+**Bitwise / shift**
+
+| Mnemonic | Operands         | Description              |
+|----------|------------------|--------------------------|
+| `and`    | dst src          | Bitwise AND              |
+| `or`     | dst src          | Bitwise OR               |
+| `xor`    | dst src          | Bitwise XOR              |
+| `not`    | dst              | Bitwise NOT              |
+| `shl`    | dst count        | Shift left               |
+| `shr`    | dst count        | Shift right (logical)    |
+
+**Compare / test**
+
+| Mnemonic | Operands         | Description              |
+|----------|------------------|--------------------------|
+| `cmp`    | a b              | Set flags for `a − b`    |
+| `test`   | a b              | Set flags for `a & b`    |
+
+**Control flow**
+
+| Mnemonic  | Operand        | Description                        |
+|-----------|----------------|------------------------------------|
+| `call`    | target         | Call                               |
+| `ret`     | —              | Return                             |
+| `syscall` | —              | System call                        |
+| `label`   | name           | Define a label (symbol)            |
+| `jmp`     | label          | Unconditional jump                 |
+| `je`      | label          | Jump if equal (ZF=1)               |
+| `jne`     | label          | Jump if not equal (ZF=0)           |
+| `jl`      | label          | Jump if less (SF≠OF)               |
+| `jle`     | label          | Jump if less or equal              |
+| `jge`     | label          | Jump if greater or equal           |
+| `jg`      | label          | Jump if greater                    |
+
+Errors if an unrecognised mnemonic is encountered, an operand is out of range, or assembly/JIT allocation fails.
