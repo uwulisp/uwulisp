@@ -1,11 +1,1 @@
-update
-
-add universe type
-add kan operation
-
-final goal calculate univalence axiom
-
-add import
-add comment support
-
-I placed the high-priority items on top.
+need combine cubical and lisp interpreter

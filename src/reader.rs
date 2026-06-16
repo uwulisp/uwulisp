@@ -1,53 +1,166 @@
 use crate::expr::Expr;
 
-/// Splits source text into tokens. Handles parens and the `'` quote shorthand.
-pub fn tokenize(src: &str) -> Vec<String> {
-    src.replace('(', " ( ")
-        .replace(')', " ) ")
-        .replace('\'', " ' ")
-        .split_whitespace()
-        .map(|s| s.to_string())
-        .collect()
+/// A single lexical token. Replaces the old "everything is a String" token
+/// stream so that string literals can be told apart from bare symbols/
+/// numbers that happen to contain the same characters (e.g. the symbol `x`
+/// vs. the string "x").
+#[derive(Debug, Clone, PartialEq)]
+pub enum Token {
+    LParen,
+    RParen,
+    Quote,
+    Str(String),
+    Atom(String),
+}
+
+/// Scans source text into a token stream.
+///
+/// This is a real character-by-character scanner (not a global
+/// find-and-replace) because that's what's required to support:
+///   - line comments (`;` ... to end of line) — we need to know where a
+///     line *ends*, which a whitespace-split approach has no concept of.
+///   - string literals (`"..."`) — parens, quotes, semicolons, and
+///     newlines inside a string must NOT be treated as syntax; a string
+///     can also legitimately span multiple lines.
+///   - multi-line input in general — whitespace (including newlines) is
+///     simply skipped between tokens, so a single top-level expression,
+///     or a single string, can freely span as many lines as it likes.
+pub fn tokenize(src: &str) -> Result<Vec<Token>, String> {
+    let chars: Vec<char> = src.chars().collect();
+    let mut tokens = Vec::new();
+    let mut i = 0;
+
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            // Whitespace of any kind (spaces, tabs, newlines, carriage
+            // returns) just separates tokens — including across lines.
+            c if c.is_whitespace() => {
+                i += 1;
+            }
+            // Line comment: skip from `;` through end of line (or EOF).
+            ';' => {
+                while i < chars.len() && chars[i] != '\n' {
+                    i += 1;
+                }
+            }
+            '(' => {
+                tokens.push(Token::LParen);
+                i += 1;
+            }
+            ')' => {
+                tokens.push(Token::RParen);
+                i += 1;
+            }
+            '\'' => {
+                tokens.push(Token::Quote);
+                i += 1;
+            }
+            '"' => {
+                i += 1; // consume opening quote
+                let mut s = String::new();
+                loop {
+                    if i >= chars.len() {
+                        return Err("unterminated string literal".into());
+                    }
+                    match chars[i] {
+                        '"' => {
+                            i += 1; // consume closing quote
+                            break;
+                        }
+                        '\\' => {
+                            i += 1;
+                            let escaped = *chars
+                                .get(i)
+                                .ok_or("unterminated string literal")?;
+                            s.push(match escaped {
+                                'n' => '\n',
+                                't' => '\t',
+                                'r' => '\r',
+                                '"' => '"',
+                                '\\' => '\\',
+                                other => other, // unknown escape: keep as-is
+                            });
+                            i += 1;
+                        }
+                        ch => {
+                            // Newlines fall through here too, so a string
+                            // literal may span multiple lines.
+                            s.push(ch);
+                            i += 1;
+                        }
+                    }
+                }
+                tokens.push(Token::Str(s));
+            }
+            _ => {
+                // Bare atom (symbol or number): read until the next
+                // delimiter.
+                let mut s = String::new();
+                while i < chars.len() {
+                    let ch = chars[i];
+                    if ch.is_whitespace()
+                        || ch == '('
+                        || ch == ')'
+                        || ch == '\''
+                        || ch == '"'
+                        || ch == ';'
+                    {
+                        break;
+                    }
+                    s.push(ch);
+                    i += 1;
+                }
+                tokens.push(Token::Atom(s));
+            }
+        }
+    }
+
+    Ok(tokens)
 }
 
 /// Parses a single expression starting at `*pos`, advancing `*pos` past it.
-pub fn parse(tokens: &[String], pos: &mut usize) -> Result<Expr, String> {
-    let tok = tokens.get(*pos).ok_or("unexpected EOF")?;
+pub fn parse(tokens: &[Token], pos: &mut usize) -> Result<Expr, String> {
+    let tok = tokens.get(*pos).ok_or("unexpected EOF")?.clone();
     *pos += 1;
-    match tok.as_str() {
-        "(" => {
+    match tok {
+        Token::LParen => {
             let mut list = Vec::new();
             loop {
-                if tokens.get(*pos).map(|s| s.as_str()) == Some(")") {
-                    *pos += 1;
-                    break;
+                match tokens.get(*pos) {
+                    Some(Token::RParen) => {
+                        *pos += 1;
+                        break;
+                    }
+                    None => return Err("unexpected EOF in list".into()),
+                    _ => list.push(parse(tokens, pos)?),
                 }
-                if *pos >= tokens.len() {
-                    return Err("unexpected EOF in list".into());
-                }
-                list.push(parse(tokens, pos)?);
             }
             Ok(Expr::List(list))
         }
-        ")" => Err("unexpected )".into()),
-        "'" => {
+        Token::RParen => Err("unexpected )".into()),
+        Token::Quote => {
             // 'expr  =>  (quote expr)
             let inner = parse(tokens, pos)?;
             Ok(Expr::List(vec![Expr::Symbol("quote".into()), inner]))
         }
-        _ => {
-            if let Ok(n) = tok.parse::<f64>() {
+        Token::Str(s) => Ok(Expr::Str(s)),
+        Token::Atom(s) => {
+            if let Ok(n) = s.parse::<f64>() {
                 Ok(Expr::Number(n))
             } else {
-                Ok(Expr::Symbol(tok.clone()))
+                Ok(Expr::Symbol(s))
             }
         }
     }
 }
 
 /// Parses an entire source string into a sequence of top-level expressions.
+/// Top-level forms, strings, and comments may all freely span multiple
+/// lines — only the surrounding parens (or a closing quote, for strings)
+/// determine where a form ends.
 pub fn parse_all(src: &str) -> Result<Vec<Expr>, String> {
-    let tokens = tokenize(src);
+    let tokens = tokenize(src)?;
     let mut pos = 0;
     let mut exprs = Vec::new();
     while pos < tokens.len() {
@@ -57,23 +170,15 @@ pub fn parse_all(src: &str) -> Result<Vec<Expr>, String> {
 }
 
 /// Convenience helper: parses params list `(a b c)` into Vec<String>.
-/// Returns an error if any element is not a symbol, so callers get a clear
-/// diagnostic instead of a silently-empty string that corrupts arity counts
-/// for curried lambdas compiled with De Bruijn indices.
 pub fn parse_params(e: &Expr) -> Result<Vec<String>, String> {
     if let Expr::List(p) = e {
-        p.iter()
+        Ok(p
+            .iter()
             .map(|e| match e {
-                Expr::Symbol(s) => Ok(s.clone()),
-                other => Err(format!(
-                    "parse_params: expected symbol in parameter list, got {:?}",
-                    other
-                )),
+                Expr::Symbol(s) => s.clone(),
+                _ => String::new(),
             })
-            .collect()
-    } else if let Expr::Symbol(s) = e {
-        // Allow a bare symbol as a single-param shorthand: (lambda x body)
-        Ok(vec![s.clone()])
+            .collect())
     } else {
         Ok(vec![])
     }

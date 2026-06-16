@@ -1,9 +1,12 @@
-(define base 'torus-base)
-(define p (path (i) base))
-(define q (path (j) base))
+(asm '(
+  (mov rax 0)
+  (label loop)
+  (add rax 1)
+  (cmp rax 5)
+  (jne loop)
+  (ret)
+)) ; => 5.0
 
-(define surface (path (i) (path (j) (if (= i i0) (papply q j) (if (= i i1) (papply q j) (if (= j i0) (papply p i) (if (= j i1) (papply p i) base)))))))
-
-(papply (papply surface 0.5) 0.5)
-
-(papply (papply surface i0) 0.3)
+; Factorial (recursive)
+(define fact (lambda (n) (if (< n 1) 1 (* n (fact (- n 1))))))
+(fact 10)   ; => 3628800

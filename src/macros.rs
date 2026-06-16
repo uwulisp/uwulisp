@@ -1,9 +1,8 @@
 use std::collections::HashMap;
-use std::rc::Rc;
 
 use crate::env::Env;
 use crate::eval::eval;
-use crate::expr::{Expr, LexEnv};
+use crate::expr::Expr;
 
 /// Expands a macro call by substituting argument *expressions* (unevaluated)
 /// for the macro's parameters in its body.
@@ -26,24 +25,24 @@ fn substitute(expr: &Expr, subst: &HashMap<String, Expr>) -> Expr {
 
 /// Evaluates a `quasiquote` form, handling nested `unquote` and
 /// `unquote-splicing` at the appropriate depth.
-pub fn eval_quasiquote(expr: &Expr, env: &Env, lex_env: &Rc<LexEnv>, depth: i32) -> Result<Expr, String> {
+pub fn eval_quasiquote(expr: &Expr, env: &Env, depth: i32) -> Result<Expr, String> {
     match expr {
         Expr::List(list) if !list.is_empty() => {
             if let Expr::Symbol(s) = &list[0] {
                 if s == "unquote" {
                     if depth == 1 {
-                        return eval(&list[1], env, lex_env);
+                        return eval(&list[1], env);
                     } else {
                         return Ok(Expr::List(vec![
                             Expr::Symbol("unquote".into()),
-                            eval_quasiquote(&list[1], env, lex_env, depth - 1)?,
+                            eval_quasiquote(&list[1], env, depth - 1)?,
                         ]));
                     }
                 }
                 if s == "quasiquote" {
                     return Ok(Expr::List(vec![
                         Expr::Symbol("quasiquote".into()),
-                        eval_quasiquote(&list[1], env, lex_env, depth + 1)?,
+                        eval_quasiquote(&list[1], env, depth + 1)?,
                     ]));
                 }
             }
@@ -55,7 +54,7 @@ pub fn eval_quasiquote(expr: &Expr, env: &Env, lex_env: &Rc<LexEnv>, depth: i32)
                     if inner.len() == 2 {
                         if let Expr::Symbol(s) = &inner[0] {
                             if s == "unquote-splicing" && depth == 1 {
-                                let spliced = eval(&inner[1], env, lex_env)?;
+                                let spliced = eval(&inner[1], env)?;
                                 if let Expr::List(items) = spliced {
                                     result.extend(items);
                                     continue;
@@ -64,7 +63,7 @@ pub fn eval_quasiquote(expr: &Expr, env: &Env, lex_env: &Rc<LexEnv>, depth: i32)
                         }
                     }
                 }
-                result.push(eval_quasiquote(item, env, lex_env, depth)?);
+                result.push(eval_quasiquote(item, env, depth)?);
             }
             Ok(Expr::List(result))
         }

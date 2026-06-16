@@ -1,5 +1,7 @@
 # uwulisp
 
+i think i need rewrite it from scratch
+
 A lightweight, experimental Lisp interpreter written in Rust. Beyond standard Lisp features (macros, lexical scoping, and arithmetic), this project features a unique **cubical type theory flavor**, including **Interval types, Path applications, Dependent Function types ($\Pi$-types), and Dependent Pair types ($\Sigma$-types)**.
 
 The interpreter operates via a two-stage process: compiling the "surface" AST (with named variables) into a bytecode-like "core" AST utilizing **De Bruijn indices** for local variable lookup, followed by evaluation.
