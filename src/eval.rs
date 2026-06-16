@@ -20,8 +20,18 @@ pub fn eval(expr: &Expr, env: &Env) -> Result<Expr, String> {
 
             if let Expr::Symbol(op) = &list[0] {
                 match op.as_str() {
-                    "quote" => return Ok(list[1].clone()),
-                    "quasiquote" => return eval_quasiquote(&list[1], env, 1),
+                    "quote" => {
+                        if list.len() != 2 {
+                            return Err(format!("quote expects 1 argument, got {}", list.len() - 1));
+                        }
+                        return Ok(list[1].clone());
+                    }
+                    "quasiquote" => {
+                        if list.len() != 2 {
+                            return Err(format!("quasiquote expects 1 argument, got {}", list.len() - 1));
+                        }
+                        return eval_quasiquote(&list[1], env, 1);
+                    }
                     "unquote" => return Err("unquote outside quasiquote".into()),
 
                     "if" => return eval_if(list, env),
@@ -53,6 +63,12 @@ pub fn eval(expr: &Expr, env: &Env) -> Result<Expr, String> {
 
 /// (if cond then [else])
 fn eval_if(list: &[Expr], env: &Env) -> Result<Expr, String> {
+    if list.len() < 3 || list.len() > 4 {
+        return Err(format!(
+            "if expects 2 or 3 arguments, got {}",
+            list.len() - 1
+        ));
+    }
     let cond = eval(&list[1], env)?;
     if is_truthy(&cond) {
         eval(&list[2], env)
@@ -65,6 +81,12 @@ fn eval_if(list: &[Expr], env: &Env) -> Result<Expr, String> {
 
 /// (define name expr)
 fn eval_define(list: &[Expr], env: &Env) -> Result<Expr, String> {
+    if list.len() != 3 {
+        return Err(format!(
+            "define expects 2 arguments, got {}",
+            list.len() - 1
+        ));
+    }
     if let Expr::Symbol(name) = &list[1] {
         let val = eval(&list[2], env)?;
         env_set(env, name.clone(), val.clone());
@@ -76,6 +98,12 @@ fn eval_define(list: &[Expr], env: &Env) -> Result<Expr, String> {
 
 /// (lambda (params...) body)
 fn eval_lambda(list: &[Expr], env: &Env) -> Result<Expr, String> {
+    if list.len() != 3 {
+        return Err(format!(
+            "lambda expects 2 arguments (params body), got {}",
+            list.len() - 1
+        ));
+    }
     let params = parse_params(&list[1])?;
     // Capture a *weak* reference so that storing the lambda back into the
     // same env (e.g. `define`) does not create a strong Rc cycle.
@@ -84,6 +112,12 @@ fn eval_lambda(list: &[Expr], env: &Env) -> Result<Expr, String> {
 
 /// (defmacro name (params...) body)
 fn eval_defmacro(list: &[Expr], env: &Env) -> Result<Expr, String> {
+    if list.len() != 4 {
+        return Err(format!(
+            "defmacro expects 3 arguments (name params body), got {}",
+            list.len() - 1
+        ));
+    }
     if let Expr::Symbol(name) = &list[1] {
         let params = parse_params(&list[2])?;
         let mac = Expr::Macro(params, Box::new(list[3].clone()));
@@ -105,16 +139,40 @@ fn eval_begin(list: &[Expr], env: &Env) -> Result<Expr, String> {
 
 /// (let ((name expr)...) body...)
 fn eval_let(list: &[Expr], env: &Env) -> Result<Expr, String> {
+    if list.len() < 3 {
+        return Err(format!(
+            "let expects at least 2 arguments (bindings body), got {}",
+            list.len() - 1
+        ));
+    }
     let new_e = new_env(Some(env.clone()));
     if let Expr::List(bindings) = &list[1] {
         for b in bindings {
-            if let Expr::List(pair) = b {
-                if let Expr::Symbol(name) = &pair[0] {
-                    let val = eval(&pair[1], env)?;
-                    env_set(&new_e, name.clone(), val);
+            match b {
+                Expr::List(pair) if pair.len() == 2 => {
+                    if let Expr::Symbol(name) = &pair[0] {
+                        let val = eval(&pair[1], env)?;
+                        env_set(&new_e, name.clone(), val);
+                    } else {
+                        return Err(format!(
+                            "let binding name must be a symbol, got: {:?}",
+                            pair[0]
+                        ));
+                    }
+                }
+                other => {
+                    return Err(format!(
+                        "let binding must be a (name expr) pair, got: {:?}",
+                        other
+                    ));
                 }
             }
         }
+    } else {
+        return Err(format!(
+            "let expects a list of bindings, got: {:?}",
+            list[1]
+        ));
     }
     let mut result = Expr::List(vec![]);
     for e in &list[2..] {

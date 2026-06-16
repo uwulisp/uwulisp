@@ -172,14 +172,13 @@ pub fn parse_all(src: &str) -> Result<Vec<Expr>, String> {
 /// Convenience helper: parses params list `(a b c)` into Vec<String>.
 pub fn parse_params(e: &Expr) -> Result<Vec<String>, String> {
     if let Expr::List(p) = e {
-        Ok(p
-            .iter()
+        p.iter()
             .map(|e| match e {
-                Expr::Symbol(s) => s.clone(),
-                _ => String::new(),
+                Expr::Symbol(s) => Ok(s.clone()),
+                other => Err(format!("parameter must be a symbol, got: {:?}", other)),
             })
-            .collect())
+            .collect()
     } else {
-        Ok(vec![])
+        Err(format!("expected a parameter list, got: {:?}", e))
     }
 }

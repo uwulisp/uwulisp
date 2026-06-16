@@ -99,6 +99,9 @@ impl fmt::Display for Operand {
 pub enum Instruction {
     // Data movement
     Mov(Operand, Operand),
+    /// Load effective address: `lea dst, [mem]`
+    /// dst must be a register; src must be a memory operand.
+    Lea(Operand, Operand),
     Push(Operand),
     Pop(Operand),
 
@@ -141,6 +144,7 @@ impl fmt::Display for Instruction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Instruction::Mov(d, s)     => write!(f, "mov {}, {}", d, s),
+            Instruction::Lea(d, s)     => write!(f, "lea {}, {}", d, s),
             Instruction::Push(o)       => write!(f, "push {}", o),
             Instruction::Pop(o)        => write!(f, "pop {}", o),
             Instruction::Add(d, s)     => write!(f, "add {}, {}", d, s),
@@ -273,6 +277,7 @@ pub fn encode_instruction(instr: Instruction) -> Result<Vec<u8>, EncodeError> {
     match instr {
         // Data movement
         Instruction::Mov(dst, src)  => encode_mov(dst, src, &mut bytes)?,
+        Instruction::Lea(dst, src)  => encode_lea(dst, src, &mut bytes)?,
         Instruction::Push(op)       => encode_push(op, &mut bytes)?,
         Instruction::Pop(op)        => encode_pop(op, &mut bytes)?,
 
@@ -363,6 +368,34 @@ fn encode_mov(dst: Operand, src: Operand, bytes: &mut Vec<u8>) -> Result<(), Enc
         }
         _ => return Err(EncodeError::UnsupportedOperand(
             "MOV: unsupported operand combination".into()
+        )),
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// LEA
+// ---------------------------------------------------------------------------
+
+/// Encode `LEA r64, [mem]`  =>  REX.W 8D /r
+///
+/// LEA computes an effective address without performing a memory access, so
+/// the source *must* be a `Mem` operand and the destination must be a `Reg`.
+fn encode_lea(dst: Operand, src: Operand, bytes: &mut Vec<u8>) -> Result<(), EncodeError> {
+    match (dst, src) {
+        (Operand::Reg(dst_r), Operand::Mem(mem)) => {
+            let (modrm, sib, disp_sz, rex_b, rex_x) = encode_mem_parts(dst_r.code(), mem)?;
+            bytes.push(rex_w(dst_r.is_extended(), rex_x, rex_b));
+            bytes.push(0x8D);
+            bytes.push(modrm);
+            if let Some(s) = sib { bytes.push(s); }
+            push_displacement(mem.disp, disp_sz, bytes);
+        }
+        (Operand::Reg(_), _) => return Err(EncodeError::UnsupportedOperand(
+            "LEA: source must be a memory operand".into()
+        )),
+        _ => return Err(EncodeError::UnsupportedOperand(
+            "LEA: destination must be a register".into()
         )),
     }
     Ok(())

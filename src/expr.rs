@@ -69,7 +69,7 @@ pub fn new_env(parent: Option<Env>) -> Env {
 pub fn downgrade(env: &Env) -> WeakEnv { Rc::downgrade(env) }
 
 pub fn upgrade(w: &WeakEnv) -> Result<Env, String> {
-    Ok(w.upgrade().unwrap_or_else(|| new_env(None)))
+    w.upgrade().ok_or_else(|| "closure environment has been dropped".into())
 }
 
 pub fn env_get(env: &Env, name: &str) -> Result<Expr, String> {

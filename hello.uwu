@@ -1,3 +1,6 @@
+(define lispy
+  (lambda ()
+    'uwu))
 (asm '(
   (mov rax 0)
   (label loop)
@@ -5,8 +8,4 @@
   (cmp rax 5)
   (jne loop)
   (ret)
-)) ; => 5.0
-
-; Factorial (recursive)
-(define fact (lambda (n) (if (< n 1) 1 (* n (fact (- n 1))))))
-(fact 10)   ; => 3628800
+))
