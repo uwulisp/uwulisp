@@ -1,7 +1,7 @@
 mod base;
 mod stdio;
 mod cubical;
-
+mod asm;
 
 use crate::env::{new_env, Env};
 use crate::expr::Expr;
@@ -26,6 +26,7 @@ pub fn global_env() -> Env {
     cubical::register_pi_types(&env);
     cubical::register_sigma_types(&env);
     cubical::register_glue_types(&env);
+    asm::assemble(&env);
 
     env
 }

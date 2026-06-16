@@ -6,6 +6,7 @@ mod expr;
 mod macros;
 mod reader;
 mod typechecker;
+mod tinyasm;
 
 use compiler::compile;
 use env::Env;
