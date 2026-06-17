@@ -8,26 +8,115 @@ use crate::reader::parse_params;
 // `apply`.  Tune this to trade GC frequency against peak memory use.
 const GC_THRESHOLD: usize = 1024;
 
+// ── trampoline ────────────────────────────────────────────────────────────────
+
+/// The result of one "step" inside the trampoline loop.
+///
+/// Most expressions produce a finished `Value` immediately.  The tail-call
+/// positions — the selected branch of `if`, the last expression of `begin` /
+/// `let`, a lambda body, and the explicit `(tailcall ...)` form — instead
+/// produce `TailCall`, which tells the loop to iterate rather than recurse.
+///
+/// This type is intentionally private; callers always see `Result<Expr, String>`.
+enum Step {
+    /// A fully evaluated result — exit the trampoline.
+    Value(Expr),
+    /// Tail-call: evaluate `expr` in `env` on the next iteration.
+    TailCall { expr: Expr, env: Env },
+}
+
+// ── public API ────────────────────────────────────────────────────────────────
+
 /// Evaluates an expression in the given environment.
 ///
 /// `heap` is the GC heap that owns all `EnvData` frames.  It must be passed
 /// to every recursive call so that allocations and lookups go to the same
 /// heap, and so that the GC can be triggered at appropriate points.
+///
+/// ### Tail-call optimization
+///
+/// `eval` is implemented as a trampoline loop.  Tail positions inside `if`,
+/// `begin`, `let`, lambda application, and the explicit `(tailcall ...)` form
+/// iterate the loop instead of growing the Rust call stack.  This means
+/// arbitrarily deep tail recursion uses O(1) stack frames.
+///
+/// **Explicit tail calls** — use `(tailcall f arg ...)` anywhere you want to
+/// guarantee that a call is optimized.  `f` is evaluated first, then the
+/// arguments, and the call is performed as a trampoline step:
+///
+/// ```scheme
+/// ; Stack-safe countdown via explicit tail call:
+/// (define (count-down n)
+///   (if (= n 0)
+///       "done"
+///       (tailcall count-down (- n 1))))
+/// ```
+///
+/// Plain calls in tail position inside `if` / `begin` / `let` / lambda bodies
+/// are *also* trampolined automatically, so for direct recursion you usually
+/// do not need `tailcall` at all.  `tailcall` becomes necessary for **mutual
+/// recursion** (e.g. `(tailcall other-fn ...)`) because the optimizer cannot
+/// statically know whether an arbitrary call expression is in tail position
+/// with respect to the *current* lambda's stack frame.
 pub fn eval(expr: &Expr, env: Env, heap: &mut Heap) -> Result<Expr, String> {
+    // Trampoline state: the expression and environment for the current iteration.
+    let mut cur_expr = expr.clone();
+    let mut cur_env  = env;
+
+    loop {
+        let step = eval_step(&cur_expr, cur_env, heap)?;
+        match step {
+            Step::Value(v)                  => return Ok(v),
+            Step::TailCall { expr: e, env } => {
+                cur_expr = e;
+                cur_env  = env;
+            }
+        }
+    }
+}
+
+/// Applies a function (builtin or lambda) to already-evaluated arguments.
+///
+/// `call_site_env` is the environment at the call site; it is passed only so
+/// that it can be included in the GC root set when a collection is triggered
+/// inside this call.
+///
+/// When called from the trampoline loop (lambda application) this always
+/// recurses into `eval` for the body — that inner `eval` has its own
+/// trampoline, so the lambda body runs stack-free.  When called from user
+/// code outside the loop (e.g. a builtin that calls back into eval) the same
+/// applies.
+pub fn apply(
+    func:          Expr,
+    args:          &[Expr],
+    call_site_env: Env,
+    heap:          &mut Heap,
+) -> Result<Expr, String> {
+    match apply_step(func, args, call_site_env, heap)? {
+        Step::Value(v)              => Ok(v),
+        Step::TailCall { expr, env } => eval(&expr, env, heap),
+    }
+}
+
+// ── core step function ────────────────────────────────────────────────────────
+
+/// One iteration of the trampoline: evaluates `expr` in `env` and returns
+/// either a finished value or a tail-call descriptor.
+fn eval_step(expr: &Expr, env: Env, heap: &mut Heap) -> Result<Step, String> {
     match expr {
-        Expr::Number(_)      => Ok(expr.clone()),
-        Expr::Str(_)         => Ok(expr.clone()),
+        Expr::Number(_)      => Ok(Step::Value(expr.clone())),
+        Expr::Str(_)         => Ok(Step::Value(expr.clone())),
         // CubicalTerm values are opaque atoms — they self-evaluate just like
         // numbers and are only inspected by the cubical builtins.
-        Expr::CubicalTerm(_) => Ok(expr.clone()),
+        Expr::CubicalTerm(_) => Ok(Step::Value(expr.clone())),
 
-        Expr::Symbol(s) => env_get(heap, env, s),
+        Expr::Symbol(s) => Ok(Step::Value(env_get(heap, env, s)?)),
 
-        Expr::Func(_) | Expr::Lambda(..) | Expr::Macro(..) => Ok(expr.clone()),
+        Expr::Func(_) | Expr::Lambda(..) | Expr::Macro(..) => Ok(Step::Value(expr.clone())),
 
         Expr::List(list) => {
             if list.is_empty() {
-                return Ok(Expr::List(vec![]));
+                return Ok(Step::Value(Expr::List(vec![])));
             }
 
             if let Expr::Symbol(op) = &list[0] {
@@ -39,7 +128,7 @@ pub fn eval(expr: &Expr, env: Env, heap: &mut Heap) -> Result<Expr, String> {
                                 list.len() - 1
                             ));
                         }
-                        return Ok(list[1].clone());
+                        return Ok(Step::Value(list[1].clone()));
                     }
 
                     "quasiquote" => {
@@ -51,35 +140,64 @@ pub fn eval(expr: &Expr, env: Env, heap: &mut Heap) -> Result<Expr, String> {
                         }
                         // eval_quasiquote needs heap for any nested unquote
                         // splices that call back into eval.
-                        return eval_quasiquote(&list[1], env, heap, 1);
+                        return Ok(Step::Value(eval_quasiquote(
+                            &list[1], env, heap, 1,
+                        )?));
                     }
 
                     "unquote" => return Err("unquote outside quasiquote".into()),
 
+                    // ── special forms that return a Step directly ──────────
                     "if"       => return eval_if(list, env, heap),
-                    "define"   => return eval_define(list, env, heap),
-                    "lambda"   => return eval_lambda(list, env, heap),
-                    "defmacro" => return eval_defmacro(list, env, heap),
+                    "define"   => return Ok(Step::Value(eval_define(list, env, heap)?)),
+                    "lambda"   => return Ok(Step::Value(eval_lambda(list, env, heap)?)),
+                    "defmacro" => return Ok(Step::Value(eval_defmacro(list, env, heap)?)),
                     "begin"    => return eval_begin(list, env, heap),
                     "let"      => return eval_let(list, env, heap),
+
+                    // ── explicit tail-call form ────────────────────────────
+                    //
+                    // `(tailcall f arg ...)` evaluates `f` and all `arg`s,
+                    // then hands the call to `apply_step`.  If `f` is a
+                    // lambda the result is a `TailCall` that the trampoline
+                    // loop processes on the next iteration — no new Rust stack
+                    // frame is consumed for the lambda body.  If `f` is a
+                    // builtin the call is executed immediately (builtins are
+                    // opaque Rust functions; we cannot defer them).
+                    "tailcall" => {
+                        if list.len() < 2 {
+                            return Err("tailcall expects at least a function".into());
+                        }
+                        let func = eval(&list[1], env, heap)?;
+                        let args: Result<Vec<Expr>, String> =
+                            list[2..].iter().map(|e| eval(e, env, heap)).collect();
+                        return apply_step(func, &args?, env, heap);
+                    }
 
                     _ => {
                         // If `op` names a macro, expand (with raw, unevaluated
                         // argument expressions) and evaluate the result.
+                        //
+                        // Macro expansion requires two eval passes (substitute
+                        // then evaluate the template, then evaluate the result).
+                        // Both are non-tail so we call eval() directly; the
+                        // second eval has its own trampoline internally.
                         if let Ok(Expr::Macro(params, body)) = env_get(heap, env, op) {
                             let substituted = expand_macro(&params, &body, &list[1..])?;
                             let expanded    = eval(&substituted, env, heap)?;
-                            return eval(&expanded, env, heap);
+                            // The expanded form is in tail position — trampoline it.
+                            return Ok(Step::TailCall { expr: expanded, env });
                         }
                     }
                 }
             }
 
-            // Normal function application: evaluate operator and operands.
+            // Normal function application: evaluate operator and operands,
+            // then delegate to apply_step so a lambda body becomes a TailCall.
             let func = eval(&list[0], env, heap)?;
             let args: Result<Vec<Expr>, String> =
                 list[1..].iter().map(|e| eval(e, env, heap)).collect();
-            apply(func, &args?, env, heap)
+            apply_step(func, &args?, env, heap)
         }
     }
 }
@@ -87,7 +205,10 @@ pub fn eval(expr: &Expr, env: Env, heap: &mut Heap) -> Result<Expr, String> {
 // ── special forms ─────────────────────────────────────────────────────────────
 
 /// `(if cond then [else])`
-fn eval_if(list: &[Expr], env: Env, heap: &mut Heap) -> Result<Expr, String> {
+///
+/// The selected branch is in tail position: we return a `TailCall` so the
+/// trampoline evaluates it without growing the stack.
+fn eval_if(list: &[Expr], env: Env, heap: &mut Heap) -> Result<Step, String> {
     if list.len() < 3 || list.len() > 4 {
         return Err(format!(
             "if expects 2 or 3 arguments, got {}",
@@ -96,11 +217,11 @@ fn eval_if(list: &[Expr], env: Env, heap: &mut Heap) -> Result<Expr, String> {
     }
     let cond = eval(&list[1], env, heap)?;
     if is_truthy(&cond) {
-        eval(&list[2], env, heap)
+        Ok(Step::TailCall { expr: list[2].clone(), env })
     } else if list.len() > 3 {
-        eval(&list[3], env, heap)
+        Ok(Step::TailCall { expr: list[3].clone(), env })
     } else {
-        Ok(Expr::List(vec![]))
+        Ok(Step::Value(Expr::List(vec![])))
     }
 }
 
@@ -162,16 +283,26 @@ fn eval_defmacro(list: &[Expr], env: Env, heap: &mut Heap) -> Result<Expr, Strin
 }
 
 /// `(begin expr...)`
-fn eval_begin(list: &[Expr], env: Env, heap: &mut Heap) -> Result<Expr, String> {
-    let mut result = Expr::List(vec![]);
-    for e in &list[1..] {
-        result = eval(e, env, heap)?;
+///
+/// All expressions except the last are evaluated strictly (they may have side
+/// effects).  The last expression is in tail position and becomes a `TailCall`.
+fn eval_begin(list: &[Expr], env: Env, heap: &mut Heap) -> Result<Step, String> {
+    let body = &list[1..];
+    if body.is_empty() {
+        return Ok(Step::Value(Expr::List(vec![])));
     }
-    Ok(result)
+    // Evaluate all but the last eagerly (side effects).
+    for e in &body[..body.len() - 1] {
+        eval(e, env, heap)?;
+    }
+    // Last expression is in tail position.
+    Ok(Step::TailCall { expr: body[body.len() - 1].clone(), env })
 }
 
 /// `(let ((name expr)...) body...)`
-fn eval_let(list: &[Expr], env: Env, heap: &mut Heap) -> Result<Expr, String> {
+///
+/// The last body expression is in tail position and becomes a `TailCall`.
+fn eval_let(list: &[Expr], env: Env, heap: &mut Heap) -> Result<Step, String> {
     if list.len() < 3 {
         return Err(format!(
             "let expects at least 2 arguments (bindings body), got {}",
@@ -214,31 +345,35 @@ fn eval_let(list: &[Expr], env: Env, heap: &mut Heap) -> Result<Expr, String> {
         ));
     }
 
-    let mut result = Expr::List(vec![]);
-    for e in &list[2..] {
-        result = eval(e, new_e, heap)?;
+    let body = &list[2..];
+    // Evaluate all but the last body expression eagerly.
+    for e in &body[..body.len() - 1] {
+        eval(e, new_e, heap)?;
     }
-    Ok(result)
+    // Last body expression is in tail position — trampoline into new_e.
+    Ok(Step::TailCall { expr: body[body.len() - 1].clone(), env: new_e })
 }
 
 // ── function application ──────────────────────────────────────────────────────
 
-/// Applies a function (builtin or lambda) to already-evaluated arguments.
+/// Core of `apply`: returns a `Step` so the trampoline can avoid a stack frame
+/// for lambda bodies.
 ///
 /// `call_site_env` is the environment at the call site; it is passed only so
 /// that it can be included in the GC root set when a collection is triggered
 /// inside this call.
-pub fn apply(
+fn apply_step(
     func:          Expr,
     args:          &[Expr],
     call_site_env: Env,
     heap:          &mut Heap,
-) -> Result<Expr, String> {
+) -> Result<Step, String> {
     match func {
         Expr::Func(f) => {
             // Built-in functions receive the heap so they can allocate or
-            // call back into eval if needed.
-            f(args, heap)
+            // call back into eval if needed.  We cannot defer them, so execute
+            // immediately and wrap the result in Step::Value.
+            Ok(Step::Value(f(args, heap)?))
         }
 
         Expr::Lambda(params, body, closure_env) => {
@@ -276,8 +411,13 @@ pub fn apply(
                 heap.collect(&[call_site_env, closure_env, call_frame]);
             }
 
-            // ── 3. Evaluate the body ──────────────────────────────────────
-            eval(&body, call_frame, heap)
+            // ── 3. Return a TailCall instead of recursing ─────────────────
+            //
+            // Previously this called `eval(&body, call_frame, heap)`.  Now we
+            // return a Step::TailCall so the trampoline loop in `eval` picks
+            // it up on the next iteration — no new Rust stack frame is created
+            // for the lambda body.
+            Ok(Step::TailCall { expr: *body, env: call_frame })
         }
 
         other => Err(format!("not a function: {:?}", other)),
