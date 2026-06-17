@@ -5,7 +5,7 @@
 use std::fs;
 use std::rc::Rc;
 
-use crate::{env::{Env, env_set}, expr::Expr, tinyasm::{Assembler, Instruction, JitMemory, MemoryAddr, Operand, Register}};
+use crate::{env::{Env, env_set}, expr::Expr, gc::Heap, tinyasm::{Assembler, Instruction, JitMemory, MemoryAddr, Operand, Register}};
 
 /// Parse an `Expr::Symbol` into an x86-64 register.
 fn parse_register(s: &str) -> Result<Register, String> {
@@ -358,11 +358,12 @@ fn parse_text_instruction(line: &str) -> Result<Option<Instruction>, String> {
 /// ```
 ///
 /// Returns the value left in RAX after execution.
-pub fn register_assembler(env: &Env) {
+pub fn register_assembler(env: Env, heap: &mut Heap) {
     env_set(
+        heap,
         env,
         "asm".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 1 {
                 return Err("asm: expects exactly 1 argument (list of instructions)".into());
             }
@@ -598,11 +599,12 @@ pub fn register_assembler(env: &Env) {
 ///   are silently ignored
 ///
 /// Returns the value left in RAX after execution as a Lisp `Number`.
-pub fn register_load_asm(env: &Env) {
+pub fn register_load_asm(env: Env, heap: &mut Heap) {
     env_set(
+        heap,
         env,
         "load-asm".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 1 {
                 return Err("load-asm: expects exactly 1 argument (filename string)".into());
             }
