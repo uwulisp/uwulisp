@@ -72,6 +72,23 @@ pub fn register_arithmetic(env: Env, heap: &mut Heap) {
             Ok(Expr::Number(acc))
         })),
     );
+
+    env_set(
+        heap,
+        env,
+        "%".into(),
+        Expr::Func(Rc::new(|args, _heap| {
+            if args.len() != 2 {
+                return Err("%: expects exactly 2 arguments".into());
+            }
+            let a = num(&args[0])?;
+            let b = num(&args[1])?;
+            if b == 0.0 {
+                return Err("%: division by zero".into());
+            }
+            Ok(Expr::Number(a % b))
+        })),
+    );
 }
 
 pub fn register_comparisons(env: Env, heap: &mut Heap) {
