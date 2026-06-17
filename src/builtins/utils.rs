@@ -1,13 +1,15 @@
 use std::io::{self, BufRead, Write};
 use std::rc::Rc;
 
+use crate::gc::Heap;
 use crate::{builtins::{display_str, num, str_arg}, env::{Env, env_set}, expr::Expr};
 
-pub fn register_strings(env: &Env) {
+pub fn register_strings(env: Env, heap: &mut Heap) {
     env_set(
+        heap,
         env,
         "string?".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 1 {
                 return Err("string?: expects exactly 1 argument".into());
             }
@@ -20,9 +22,10 @@ pub fn register_strings(env: &Env) {
     );
 
     env_set(
+        heap,
         env,
         "string-append".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             let mut out = String::new();
             for a in args {
                 out.push_str(str_arg(a)?);
@@ -32,9 +35,10 @@ pub fn register_strings(env: &Env) {
     );
 
     env_set(
+        heap,
         env,
         "string-length".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 1 {
                 return Err("string-length: expects exactly 1 argument".into());
             }
@@ -44,7 +48,7 @@ pub fn register_strings(env: &Env) {
 
     macro_rules! string_cmp_fn {
         ($op:tt) => {
-            Expr::Func(Rc::new(|args| {
+            Expr::Func(Rc::new(|args, _heap| {
                 if args.len() != 2 {
                     return Err("string comparison expects exactly 2 arguments".into());
                 }
@@ -55,16 +59,17 @@ pub fn register_strings(env: &Env) {
         };
     }
 
-    env_set(env, "string=?".into(), string_cmp_fn!(==));
-    env_set(env, "string<?".into(), string_cmp_fn!(<));
-    env_set(env, "string>?".into(), string_cmp_fn!(>));
-    env_set(env, "string<=?".into(), string_cmp_fn!(<=));
-    env_set(env, "string>=?".into(), string_cmp_fn!(>=));
+    env_set(heap, env, "string=?".into(), string_cmp_fn!(==));
+    env_set(heap, env, "string<?".into(), string_cmp_fn!(<));
+    env_set(heap, env, "string>?".into(), string_cmp_fn!(>));
+    env_set(heap, env, "string<=?".into(), string_cmp_fn!(<=));
+    env_set(heap, env, "string>=?".into(), string_cmp_fn!(>=));
 
     env_set(
+        heap,
         env,
         "string->number".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 1 {
                 return Err("string->number: expects exactly 1 argument".into());
             }
@@ -76,9 +81,10 @@ pub fn register_strings(env: &Env) {
     );
 
     env_set(
+        heap,
         env,
         "number->string".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 1 {
                 return Err("number->string: expects exactly 1 argument".into());
             }
@@ -87,9 +93,10 @@ pub fn register_strings(env: &Env) {
     );
 
     env_set(
+        heap,
         env,
         "string->symbol".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 1 {
                 return Err("string->symbol: expects exactly 1 argument".into());
             }
@@ -98,9 +105,10 @@ pub fn register_strings(env: &Env) {
     );
 
     env_set(
+        heap,
         env,
         "symbol->string".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 1 {
                 return Err("symbol->string: expects exactly 1 argument".into());
             }
@@ -112,9 +120,10 @@ pub fn register_strings(env: &Env) {
     );
 
     env_set(
+        heap,
         env,
         "string-upcase".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 1 {
                 return Err("string-upcase: expects exactly 1 argument".into());
             }
@@ -123,9 +132,10 @@ pub fn register_strings(env: &Env) {
     );
 
     env_set(
+        heap,
         env,
         "string-downcase".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 1 {
                 return Err("string-downcase: expects exactly 1 argument".into());
             }
@@ -135,9 +145,10 @@ pub fn register_strings(env: &Env) {
 
     // (substring s start end) — character-indexed, end-exclusive, like Scheme.
     env_set(
+        heap,
         env,
         "substring".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args,_heap| {
             if args.len() != 3 {
                 return Err("substring: expects (substring s start end)".into());
             }
@@ -158,11 +169,12 @@ pub fn register_strings(env: &Env) {
     );
 }
 
-pub fn register_misc(env: &Env) {
+pub fn register_misc(env: Env, heap: &mut Heap) {
     env_set(
+        heap,
         env,
         "print".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             for a in args {
                 print!("{} ", display_str(a));
             }
@@ -180,11 +192,12 @@ pub fn register_misc(env: &Env) {
 ///
 /// `(read-line)`            — reads one line from stdin, returns `Expr::Str`.
 /// `(read-line prompt)`     — prints `prompt` (no newline) first, then reads.
-pub fn register_io(env: &Env) {
+pub fn register_io(env: Env,heap: &mut Heap) {
     env_set(
+        heap,
         env,
         "read-line".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args,_heap| {
             use std::io::Write;
             if args.len() > 1 {
                 return Err("read-line: expects 0 or 1 arguments".into());
@@ -214,12 +227,13 @@ pub fn register_io(env: &Env) {
 /// `(file-append path content)`  — append string content to file.
 /// `(file-exists? path)`         — return 1.0 / 0.0.
 /// `(file-delete  path)`         — delete file; returns `()`.
-pub fn register_file(env: &Env) {
+pub fn register_file(env: Env,heap: &mut Heap) {
     // (file-read path)
     env_set(
+        heap,
         env,
         "file-read".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 1 {
                 return Err("file-read: expects exactly 1 argument".into());
             }
@@ -232,9 +246,10 @@ pub fn register_file(env: &Env) {
 
     // (file-write path content)
     env_set(
+        heap,
         env,
         "file-write".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args,_heap| {
             if args.len() != 2 {
                 return Err("file-write: expects (file-write path content)".into());
             }
@@ -248,9 +263,10 @@ pub fn register_file(env: &Env) {
 
     // (file-append path content)
     env_set(
+        heap,
         env,
         "file-append".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 2 {
                 return Err("file-append: expects (file-append path content)".into());
             }
@@ -269,9 +285,10 @@ pub fn register_file(env: &Env) {
 
     // (file-exists? path)
     env_set(
+        heap,
         env,
         "file-exists?".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args,_heap| {
             if args.len() != 1 {
                 return Err("file-exists?: expects exactly 1 argument".into());
             }
@@ -286,9 +303,10 @@ pub fn register_file(env: &Env) {
 
     // (file-delete path)
     env_set(
+        heap,
         env,
         "file-delete".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args,_heap| {
             if args.len() != 1 {
                 return Err("file-delete: expects exactly 1 argument".into());
             }
@@ -309,14 +327,15 @@ pub fn register_file(env: &Env) {
 /// `(shell cmd)`                    — run `cmd` via `sh -c`, block until done,
 ///                                    return captured stdout as `Expr::Str`.
 /// `(shell-status cmd)`             — same but return exit code as `Expr::Number`.
-pub fn register_os(env: &Env) {
+pub fn register_os(env: Env,heap: &mut Heap) {
     use std::process::Command;
 
     // (shell cmd-string) → Expr::Str  (captured stdout)
     env_set(
+        heap,
         env,
         "shell".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args,_heap| {
             if args.len() != 1 {
                 return Err("shell: expects exactly 1 argument".into());
             }
@@ -333,9 +352,10 @@ pub fn register_os(env: &Env) {
 
     // (shell-status cmd-string) → Expr::Number  (exit code)
     env_set(
+        heap,
         env,
         "shell-status".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args,_heap| {
             if args.len() != 1 {
                 return Err("shell-status: expects exactly 1 argument".into());
             }

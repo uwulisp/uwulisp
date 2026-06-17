@@ -7,6 +7,7 @@ use crate::cubical::syntax::Term;
 use crate::cubical::typechecker as tc;
 use crate::env::{Env, env_set};
 use crate::expr::Expr;
+use crate::gc::Heap;
 
 // ── cubical builtins ──────────────────────────────────────────────────────────
 //
@@ -65,13 +66,14 @@ fn wrap(t: Term) -> Expr {
 }
 
 
-pub fn register_cubical(env: &Env) {
+pub fn register_cubical(env: Env, heap: &mut Heap) {
     // ── interval atoms ───────────────────────────────────────────────────────
 
     env_set(
+        heap,
         env,
         "interval-zero".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if !args.is_empty() {
                 return Err("interval-zero: no arguments expected".into());
             }
@@ -80,9 +82,10 @@ pub fn register_cubical(env: &Env) {
     );
 
     env_set(
+        heap,
         env,
         "interval-one".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if !args.is_empty() {
                 return Err("interval-one: no arguments expected".into());
             }
@@ -92,9 +95,10 @@ pub fn register_cubical(env: &Env) {
 
     // (interval-var n) — n is a Lisp number used as the interval variable index
     env_set(
+        heap,
         env,
         "interval-var".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 1 {
                 return Err("interval-var: expects 1 argument".into());
             }
@@ -105,9 +109,10 @@ pub fn register_cubical(env: &Env) {
 
     // (interval-meet a b)
     env_set(
+        heap,
         env,
         "interval-meet".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 2 {
                 return Err("interval-meet: expects 2 arguments".into());
             }
@@ -122,9 +127,10 @@ pub fn register_cubical(env: &Env) {
 
     // (interval-join a b)
     env_set(
+        heap,
         env,
         "interval-join".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 2 {
                 return Err("interval-join: expects 2 arguments".into());
             }
@@ -138,9 +144,10 @@ pub fn register_cubical(env: &Env) {
 
     // (interval-neg a)
     env_set(
+        heap,
         env,
         "interval-neg".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 1 {
                 return Err("interval-neg: expects 1 argument".into());
             }
@@ -155,9 +162,10 @@ pub fn register_cubical(env: &Env) {
 
     // (var n) — de Bruijn index
     env_set(
+        heap,
         env,
         "var".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 1 {
                 return Err("var: expects 1 argument (de Bruijn index)".into());
             }
@@ -170,9 +178,10 @@ pub fn register_cubical(env: &Env) {
 
     // (univ level)
     env_set(
+        heap,
         env,
         "univ".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 1 {
                 return Err("univ: expects 1 argument (universe level)".into());
             }
@@ -183,9 +192,10 @@ pub fn register_cubical(env: &Env) {
 
     // The interval type itself as a constant.
     env_set(
+        heap,
         env,
         "interval-type".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if !args.is_empty() {
                 return Err("interval-type: no arguments expected".into());
             }
@@ -197,9 +207,10 @@ pub fn register_cubical(env: &Env) {
 
     // (lambda name body)  — TAbs
     env_set(
+        heap,
         env,
         "lambda".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 2 {
                 return Err("lambda: expects (lambda name body)".into());
             }
@@ -211,9 +222,10 @@ pub fn register_cubical(env: &Env) {
 
     // (app f x)  — TApp
     env_set(
+        heap,
         env,
         "app".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 2 {
                 return Err("app: expects (app f x)".into());
             }
@@ -225,9 +237,10 @@ pub fn register_cubical(env: &Env) {
 
     // (pi name domain codomain)  — TPi
     env_set(
+        heap,
         env,
         "pi".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 3 {
                 return Err("pi: expects (pi name domain codomain)".into());
             }
@@ -242,9 +255,10 @@ pub fn register_cubical(env: &Env) {
 
     // (path-type A a b)  — TPath(A, a, b)
     env_set(
+        heap,
         env,
         "path-type".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 3 {
                 return Err("path-type: expects (path-type A a b)".into());
             }
@@ -257,9 +271,10 @@ pub fn register_cubical(env: &Env) {
 
     // (path-lambda name body)  — PLam
     env_set(
+        heap,
         env,
         "path-lambda".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 2 {
                 return Err("path-lambda: expects (path-lambda name body)".into());
             }
@@ -271,9 +286,10 @@ pub fn register_cubical(env: &Env) {
 
     // (path-app p i)  — PApp
     env_set(
+        heap,
         env,
         "path-app".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 2 {
                 return Err("path-app: expects (path-app p i)".into());
             }
@@ -287,9 +303,10 @@ pub fn register_cubical(env: &Env) {
 
     // (sigma name domain codomain)  — TSigma
     env_set(
+        heap,
         env,
         "sigma".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 3 {
                 return Err("sigma: expects (sigma name domain codomain)".into());
             }
@@ -302,9 +319,10 @@ pub fn register_cubical(env: &Env) {
 
     // (pair a b)  — TPair
     env_set(
+        heap,
         env,
         "pair".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 2 {
                 return Err("pair: expects (pair a b)".into());
             }
@@ -316,9 +334,10 @@ pub fn register_cubical(env: &Env) {
 
     // (fst p)  — TFst
     env_set(
+        heap,
         env,
         "fst".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 1 {
                 return Err("fst: expects (fst pair)".into());
             }
@@ -329,9 +348,10 @@ pub fn register_cubical(env: &Env) {
 
     // (snd p)  — TSnd
     env_set(
+        heap,
         env,
         "snd".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 1 {
                 return Err("snd: expects (snd pair)".into());
             }
@@ -344,9 +364,10 @@ pub fn register_cubical(env: &Env) {
 
     // (hcomp A phi tube base)  — THComp
     env_set(
+        heap,
         env,
         "hcomp".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 4 {
                 return Err("hcomp: expects (hcomp A phi tube base)".into());
             }
@@ -367,9 +388,10 @@ pub fn register_cubical(env: &Env) {
 
     // (transport path x)  — TTransport
     env_set(
+        heap,
         env,
         "transport".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 2 {
                 return Err("transport: expects (transport path x)".into());
             }
@@ -383,9 +405,10 @@ pub fn register_cubical(env: &Env) {
 
     // (equiv A B)  — TEquiv
     env_set(
+        heap,
         env,
         "equiv".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 2 {
                 return Err("equiv: expects (equiv A B)".into());
             }
@@ -397,9 +420,10 @@ pub fn register_cubical(env: &Env) {
 
     // (make-equiv A B f g eta eps)  — TMkEquiv
     env_set(
+        heap,
         env,
         "make-equiv".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 6 {
                 return Err("make-equiv: expects (make-equiv A B f g eta eps)".into());
             }
@@ -422,9 +446,10 @@ pub fn register_cubical(env: &Env) {
 
     // (equiv-fwd e x)  — TEquivFwd: apply the forward direction of an equivalence
     env_set(
+        heap,
         env,
         "equiv-fwd".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 2 {
                 return Err("equiv-fwd: expects (equiv-fwd e x)".into());
             }
@@ -436,9 +461,10 @@ pub fn register_cubical(env: &Env) {
 
     // (ua e)  — TUa: univalence, turns an equivalence into a path of types
     env_set(
+        heap,
         env,
         "ua".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 1 {
                 return Err("ua: expects (ua equiv)".into());
             }
@@ -455,9 +481,10 @@ pub fn register_cubical(env: &Env) {
     // The API doc's 4-field description was inaccurate; the real source folds
     // the equivalence into T (use `pair` to build it: (pair T-type equiv)).
     env_set(
+        heap,
         env,
         "glue".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 3 {
                 return Err("glue: expects (glue A phi T) where T = (pair type equiv)".into());
             }
@@ -474,9 +501,10 @@ pub fn register_cubical(env: &Env) {
     //   t   — the element on the glued side
     //   a   — the underlying element on the base type side
     env_set(
+        heap,
         env,
         "glue-elem".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 3 {
                 return Err("glue-elem: expects (glue-elem phi t a)".into());
             }
@@ -497,9 +525,10 @@ pub fn register_cubical(env: &Env) {
     //   te  — the bundled (type, equiv) pair
     //   g   — the glued term to unglue
     env_set(
+        heap,
         env,
         "unglue".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 3 {
                 return Err("unglue: expects (unglue phi te g)".into());
             }
@@ -518,9 +547,10 @@ pub fn register_cubical(env: &Env) {
 
     // (ctt-eval t) — normalise a cubical term
     env_set(
+        heap,
         env,
         "ctt-eval".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 1 {
                 return Err("ctt-eval: expects exactly 1 argument".into());
             }
@@ -531,9 +561,10 @@ pub fn register_cubical(env: &Env) {
 
     // (ctt-infer t) — infer the closed type of a cubical term
     env_set(
+        heap,
         env,
         "ctt-infer".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 1 {
                 return Err("ctt-infer: expects exactly 1 argument".into());
             }
@@ -546,9 +577,10 @@ pub fn register_cubical(env: &Env) {
     // (ctt-check t ty) — check that t has type ty in the empty context;
     // returns 1.0 on success and raises a Lisp error on failure.
     env_set(
+        heap,
         env,
         "ctt-check".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 2 {
                 return Err("ctt-check: expects (ctt-check term type)".into());
             }
@@ -564,9 +596,10 @@ pub fn register_cubical(env: &Env) {
     // `definitionally_equal` returns a plain bool (the EtaResult the API doc
     // described is the internal 3-valued type; the public wrapper collapses it).
     env_set(
+        heap,
         env,
         "ctt-equal?".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 2 {
                 return Err("ctt-equal?: expects (ctt-equal? t u)".into());
             }

@@ -1,7 +1,7 @@
-//mod asm;
-//mod cubical;
+mod asm;
+mod cubical;
 mod base;
-//mod utils;
+mod utils;
 
 use crate::env::{Env, new_env};
 use crate::expr::Expr;
@@ -49,14 +49,14 @@ pub fn global_env(heap: &mut Heap) -> Env {
     base::register_arithmetic(env, heap);
     base::register_comparisons(env, heap);
     base::register_lists(env, heap);
-    //utils::register_strings(env, heap);
-    //utils::register_misc(env, heap);
-    //utils::register_file(env, heap);
-    //utils::register_io(env, heap);
-    //utils::register_os(env, heap);
-    //cubical::register_cubical(env, heap);
-    //asm::register_assembler(env, heap);
-    //asm::register_load_asm(env, heap);
+    utils::register_strings(env, heap);
+    utils::register_misc(env, heap);
+    utils::register_file(env, heap);
+    utils::register_io(env, heap);
+    utils::register_os(env, heap);
+    cubical::register_cubical(env, heap);
+    asm::register_assembler(env, heap);
+    asm::register_load_asm(env, heap);
 
     env
 }
