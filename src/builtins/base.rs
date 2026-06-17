@@ -1,12 +1,16 @@
 use std::rc::Rc;
 
-use crate::{builtins::num, env::{Env, env_set}, expr::{Expr, is_truthy}};
+use crate::builtins::num;
+use crate::env::{Env, env_set};
+use crate::expr::{Expr, is_truthy};
+use crate::gc::Heap;
 
-pub fn register_arithmetic(env: &Env) {
+pub fn register_arithmetic(env: Env, heap: &mut Heap) {
     env_set(
+        heap,
         env,
         "+".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             let mut sum = 0.0;
             for a in args {
                 sum += num(a)?;
@@ -16,9 +20,10 @@ pub fn register_arithmetic(env: &Env) {
     );
 
     env_set(
+        heap,
         env,
         "-".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.is_empty() {
                 return Err("-: need at least 1 argument".into());
             }
@@ -35,9 +40,10 @@ pub fn register_arithmetic(env: &Env) {
     );
 
     env_set(
+        heap,
         env,
         "*".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             let mut prod = 1.0;
             for a in args {
                 prod *= num(a)?;
@@ -47,9 +53,10 @@ pub fn register_arithmetic(env: &Env) {
     );
 
     env_set(
+        heap,
         env,
         "/".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.is_empty() {
                 return Err("/: need at least 1 argument".into());
             }
@@ -67,10 +74,12 @@ pub fn register_arithmetic(env: &Env) {
     );
 }
 
-pub fn register_comparisons(env: &Env) {
+pub fn register_comparisons(env: Env, heap: &mut Heap) {
+    // The macro expands to a closure whose second parameter is `_heap`.
+    // Every comparison is a pure numeric computation so the heap is unused.
     macro_rules! cmp_fn {
         ($op:tt) => {
-            Expr::Func(Rc::new(|args| {
+            Expr::Func(Rc::new(|args, _heap| {
                 if args.len() != 2 {
                     return Err("comparison expects exactly 2 arguments".into());
                 }
@@ -81,16 +90,17 @@ pub fn register_comparisons(env: &Env) {
         };
     }
 
-    env_set(env, "=".into(), cmp_fn!(==));
-    env_set(env, "<".into(), cmp_fn!(<));
-    env_set(env, ">".into(), cmp_fn!(>));
-    env_set(env, "<=".into(), cmp_fn!(<=));
-    env_set(env, ">=".into(), cmp_fn!(>=));
+    env_set(heap, env, "=".into(),  cmp_fn!(==));
+    env_set(heap, env, "<".into(),  cmp_fn!(<));
+    env_set(heap, env, ">".into(),  cmp_fn!(>));
+    env_set(heap, env, "<=".into(), cmp_fn!(<=));
+    env_set(heap, env, ">=".into(), cmp_fn!(>=));
 
     env_set(
+        heap,
         env,
         "not".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 1 {
                 return Err("not: expects exactly 1 argument".into());
             }
@@ -99,17 +109,19 @@ pub fn register_comparisons(env: &Env) {
     );
 }
 
-pub fn register_lists(env: &Env) {
+pub fn register_lists(env: Env, heap: &mut Heap) {
     env_set(
+        heap,
         env,
         "list".into(),
-        Expr::Func(Rc::new(|args| Ok(Expr::List(args.to_vec())))),
+        Expr::Func(Rc::new(|args, _heap| Ok(Expr::List(args.to_vec())))),
     );
 
     env_set(
+        heap,
         env,
         "car".into(),
-        Expr::Func(Rc::new(|args| match &args[0] {
+        Expr::Func(Rc::new(|args, _heap| match &args[0] {
             Expr::List(l) => l
                 .first()
                 .cloned()
@@ -119,9 +131,10 @@ pub fn register_lists(env: &Env) {
     );
 
     env_set(
+        heap,
         env,
         "cdr".into(),
-        Expr::Func(Rc::new(|args| match &args[0] {
+        Expr::Func(Rc::new(|args, _heap| match &args[0] {
             Expr::List(l) => {
                 if l.is_empty() {
                     Err("cdr: empty list".into())
@@ -134,27 +147,29 @@ pub fn register_lists(env: &Env) {
     );
 
     env_set(
+        heap,
         env,
         "cons".into(),
-        Expr::Func(Rc::new(|args| {
+        Expr::Func(Rc::new(|args, _heap| {
             if args.len() != 2 {
                 return Err("cons: expects exactly 2 arguments".into());
             }
             let mut result = vec![args[0].clone()];
             match &args[1] {
                 Expr::List(l) => result.extend(l.clone()),
-                other => result.push(other.clone()),
+                other         => result.push(other.clone()),
             }
             Ok(Expr::List(result))
         })),
     );
 
     env_set(
+        heap,
         env,
         "null?".into(),
-        Expr::Func(Rc::new(|args| match &args[0] {
+        Expr::Func(Rc::new(|args, _heap| match &args[0] {
             Expr::List(l) => Ok(Expr::Number(if l.is_empty() { 1.0 } else { 0.0 })),
-            _ => Ok(Expr::Number(0.0)),
+            _             => Ok(Expr::Number(0.0)),
         })),
     );
 }

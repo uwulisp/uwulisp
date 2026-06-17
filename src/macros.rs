@@ -3,9 +3,12 @@ use std::collections::HashMap;
 use crate::env::Env;
 use crate::eval::eval;
 use crate::expr::Expr;
+use crate::gc::Heap;
 
 /// Expands a macro call by substituting argument *expressions* (unevaluated)
 /// for the macro's parameters in its body.
+///
+/// Pure substitution — no evaluation, no heap access needed.
 pub fn expand_macro(params: &[String], body: &Expr, args: &[Expr]) -> Result<Expr, String> {
     if args.len() != params.len() {
         return Err(format!(
@@ -26,14 +29,13 @@ pub fn expand_macro(params: &[String], body: &Expr, args: &[Expr]) -> Result<Exp
 fn substitute(expr: &Expr, subst: &HashMap<String, Expr>) -> Expr {
     match expr {
         Expr::Symbol(s) => subst.get(s).cloned().unwrap_or_else(|| expr.clone()),
-        Expr::List(l) => Expr::List(l.iter().map(|e| substitute(e, subst)).collect()),
-        _ => expr.clone(),
+        Expr::List(l)   => Expr::List(l.iter().map(|e| substitute(e, subst)).collect()),
+        _               => expr.clone(),
     }
 }
 
 /// Returns `Some(op_name)` when `expr` is a list whose first element is a
-/// symbol — e.g. `(unquote foo)` → `Some("unquote")`. Used to identify
-/// special forms inside quasiquote without deeply nested `if let` chains.
+/// symbol — e.g. `(unquote foo)` → `Some("unquote")`.
 fn qq_op(expr: &Expr) -> Option<&str> {
     if let Expr::List(l) = expr {
         if let Some(Expr::Symbol(s)) = l.first() {
@@ -45,7 +47,19 @@ fn qq_op(expr: &Expr) -> Option<&str> {
 
 /// Evaluates a `quasiquote` form, handling nested `unquote` and
 /// `unquote-splicing` at the appropriate depth.
-pub fn eval_quasiquote(expr: &Expr, env: &Env, depth: usize) -> Result<Expr, String> {
+///
+/// ### Signature change from the Rc era
+///
+/// `env` is now `Env` (`GcHandle`, a `Copy` integer) instead of `&Env`
+/// (`&Rc<RefCell<EnvData>>`).  Passing by value is both cheaper and simpler.
+/// `heap` is required because `unquote`/`unquote-splicing` at depth 1 call
+/// back into `eval`, which needs the heap for variable lookups and allocation.
+pub fn eval_quasiquote(
+    expr:  &Expr,
+    env:   Env,
+    heap:  &mut Heap,
+    depth: usize,
+) -> Result<Expr, String> {
     match expr {
         Expr::List(list) if !list.is_empty() => {
             match qq_op(expr) {
@@ -57,11 +71,14 @@ pub fn eval_quasiquote(expr: &Expr, env: &Env, depth: usize) -> Result<Expr, Str
                         ));
                     }
                     if depth == 1 {
-                        eval(&list[1], env)
+                        // Fully escape: evaluate the inner expression normally.
+                        eval(&list[1], env, heap)
                     } else {
+                        // Still nested — descend one level but keep the
+                        // `unquote` wrapper for the outer quasiquote to see.
                         Ok(Expr::List(vec![
                             Expr::Symbol("unquote".into()),
-                            eval_quasiquote(&list[1], env, depth - 1)?,
+                            eval_quasiquote(&list[1], env, heap, depth - 1)?,
                         ]))
                     }
                 }
@@ -73,9 +90,10 @@ pub fn eval_quasiquote(expr: &Expr, env: &Env, depth: usize) -> Result<Expr, Str
                             list.len() - 1
                         ));
                     }
+                    // Entering a nested quasiquote — increment depth.
                     Ok(Expr::List(vec![
                         Expr::Symbol("quasiquote".into()),
-                        eval_quasiquote(&list[1], env, depth + 1)?,
+                        eval_quasiquote(&list[1], env, heap, depth + 1)?,
                     ]))
                 }
 
@@ -94,8 +112,8 @@ pub fn eval_quasiquote(expr: &Expr, env: &Env, depth: usize) -> Result<Expr, Str
                                 ));
                             }
                             if depth == 1 {
-                                // Evaluate and splice the resulting list.
-                                match eval(&inner[1], env)? {
+                                // Evaluate and splice the resulting list inline.
+                                match eval(&inner[1], env, heap)? {
                                     Expr::List(items) => result.extend(items),
                                     other => {
                                         return Err(format!(
@@ -108,17 +126,19 @@ pub fn eval_quasiquote(expr: &Expr, env: &Env, depth: usize) -> Result<Expr, Str
                                 // At depth > 1 reconstruct the form, like unquote does.
                                 result.push(Expr::List(vec![
                                     Expr::Symbol("unquote-splicing".into()),
-                                    eval_quasiquote(&inner[1], env, depth - 1)?,
+                                    eval_quasiquote(&inner[1], env, heap, depth - 1)?,
                                 ]));
                             }
                         } else {
-                            result.push(eval_quasiquote(item, env, depth)?);
+                            result.push(eval_quasiquote(item, env, heap, depth)?);
                         }
                     }
                     Ok(Expr::List(result))
                 }
             }
         }
+        // Atoms (numbers, strings, symbols not in unquote position) are
+        // returned as-is regardless of depth.
         _ => Ok(expr.clone()),
     }
 }
