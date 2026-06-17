@@ -1,177 +1,5 @@
-use std::io::{self, BufRead, Write};
-use std::rc::Rc;
-
-use crate::{builtins::{display_str, num, str_arg}, env::{Env, env_set}, expr::Expr};
-
-pub fn register_strings(env: &Env) {
-    env_set(
-        env,
-        "string?".into(),
-        Expr::Func(Rc::new(|args| {
-            if args.len() != 1 {
-                return Err("string?: expects exactly 1 argument".into());
-            }
-            Ok(Expr::Number(if let Expr::Str(_) = &args[0] {
-                1.0
-            } else {
-                0.0
-            }))
-        })),
-    );
-
-    env_set(
-        env,
-        "string-append".into(),
-        Expr::Func(Rc::new(|args| {
-            let mut out = String::new();
-            for a in args {
-                out.push_str(str_arg(a)?);
-            }
-            Ok(Expr::Str(out))
-        })),
-    );
-
-    env_set(
-        env,
-        "string-length".into(),
-        Expr::Func(Rc::new(|args| {
-            if args.len() != 1 {
-                return Err("string-length: expects exactly 1 argument".into());
-            }
-            Ok(Expr::Number(str_arg(&args[0])?.chars().count() as f64))
-        })),
-    );
-
-    macro_rules! string_cmp_fn {
-        ($op:tt) => {
-            Expr::Func(Rc::new(|args| {
-                if args.len() != 2 {
-                    return Err("string comparison expects exactly 2 arguments".into());
-                }
-                let a = str_arg(&args[0])?;
-                let b = str_arg(&args[1])?;
-                Ok(Expr::Number(if a $op b { 1.0 } else { 0.0 }))
-            }))
-        };
-    }
-
-    env_set(env, "string=?".into(), string_cmp_fn!(==));
-    env_set(env, "string<?".into(), string_cmp_fn!(<));
-    env_set(env, "string>?".into(), string_cmp_fn!(>));
-    env_set(env, "string<=?".into(), string_cmp_fn!(<=));
-    env_set(env, "string>=?".into(), string_cmp_fn!(>=));
-
-    env_set(
-        env,
-        "string->number".into(),
-        Expr::Func(Rc::new(|args| {
-            if args.len() != 1 {
-                return Err("string->number: expects exactly 1 argument".into());
-            }
-            let s = str_arg(&args[0])?;
-            s.parse::<f64>()
-                .map(Expr::Number)
-                .map_err(|_| format!("string->number: not a valid number: {:?}", s))
-        })),
-    );
-
-    env_set(
-        env,
-        "number->string".into(),
-        Expr::Func(Rc::new(|args| {
-            if args.len() != 1 {
-                return Err("number->string: expects exactly 1 argument".into());
-            }
-            Ok(Expr::Str(format!("{}", num(&args[0])?)))
-        })),
-    );
-
-    env_set(
-        env,
-        "string->symbol".into(),
-        Expr::Func(Rc::new(|args| {
-            if args.len() != 1 {
-                return Err("string->symbol: expects exactly 1 argument".into());
-            }
-            Ok(Expr::Symbol(str_arg(&args[0])?.to_string()))
-        })),
-    );
-
-    env_set(
-        env,
-        "symbol->string".into(),
-        Expr::Func(Rc::new(|args| {
-            if args.len() != 1 {
-                return Err("symbol->string: expects exactly 1 argument".into());
-            }
-            match &args[0] {
-                Expr::Symbol(s) => Ok(Expr::Str(s.clone())),
-                other => Err(format!("symbol->string: expected symbol, got {:?}", other)),
-            }
-        })),
-    );
-
-    env_set(
-        env,
-        "string-upcase".into(),
-        Expr::Func(Rc::new(|args| {
-            if args.len() != 1 {
-                return Err("string-upcase: expects exactly 1 argument".into());
-            }
-            Ok(Expr::Str(str_arg(&args[0])?.to_uppercase()))
-        })),
-    );
-
-    env_set(
-        env,
-        "string-downcase".into(),
-        Expr::Func(Rc::new(|args| {
-            if args.len() != 1 {
-                return Err("string-downcase: expects exactly 1 argument".into());
-            }
-            Ok(Expr::Str(str_arg(&args[0])?.to_lowercase()))
-        })),
-    );
-
-    // (substring s start end) — character-indexed, end-exclusive, like Scheme.
-    env_set(
-        env,
-        "substring".into(),
-        Expr::Func(Rc::new(|args| {
-            if args.len() != 3 {
-                return Err("substring: expects (substring s start end)".into());
-            }
-            let s = str_arg(&args[0])?;
-            let start = num(&args[1])? as usize;
-            let end = num(&args[2])? as usize;
-            let chars: Vec<char> = s.chars().collect();
-            if start > end || end > chars.len() {
-                return Err(format!(
-                    "substring: index out of range (start={}, end={}, len={})",
-                    start,
-                    end,
-                    chars.len()
-                ));
-            }
-            Ok(Expr::Str(chars[start..end].iter().collect()))
-        })),
-    );
-}
-
-pub fn register_misc(env: &Env) {
-    env_set(
-        env,
-        "print".into(),
-        Expr::Func(Rc::new(|args| {
-            for a in args {
-                print!("{} ", display_str(a));
-            }
-            println!();
-            Ok(Expr::List(vec![]))
-        })),
-    );
-}
-
+### utils
+```rust
 // ─────────────────────────────────────────────────────────────────────────────
 // I/O — user input
 // ─────────────────────────────────────────────────────────────────────────────
@@ -181,24 +9,33 @@ pub fn register_misc(env: &Env) {
 /// `(read-line)`            — reads one line from stdin, returns `Expr::Str`.
 /// `(read-line prompt)`     — prints `prompt` (no newline) first, then reads.
 pub fn register_io(env: &Env) {
+    // (read-line [prompt])
     env_set(
         env,
         "read-line".into(),
         Expr::Func(Rc::new(|args| {
-            use std::io::Write;
             if args.len() > 1 {
                 return Err("read-line: expects 0 or 1 arguments".into());
             }
-            // Optional prompt — flush so it appears before blocking.
+            // Optional prompt
             if let Some(p) = args.first() {
-                print!("{}", crate::builtins::display_str(p));
-                std::io::stdout().flush().map_err(|e| e.to_string())?;
+                print!("{}", display_str(p));
+                io::stdout().flush().map_err(|e| e.to_string())?;
             }
-            // Use the shared BufReader from main so we never race with the REPL.
-            match crate::helper::shared_read_line()? {
-                Some(line) => Ok(Expr::Str(line)),
-                None       => Ok(Expr::Str(String::new())), // EOF → empty string
+            let stdin = io::stdin();
+            let mut line = String::new();
+            stdin
+                .lock()
+                .read_line(&mut line)
+                .map_err(|e| format!("read-line: {}", e))?;
+            // Strip the trailing newline to match Scheme behaviour.
+            if line.ends_with('\n') {
+                line.pop();
+                if line.ends_with('\r') {
+                    line.pop();
+                }
             }
+            Ok(Expr::Str(line))
         })),
     );
 }
@@ -348,3 +185,106 @@ pub fn register_os(env: &Env) {
         })),
     );
 }
+```
+
+### asm
+```rust
+// ---------------------------------------------------------------------------
+// `load-asm` built-in
+// ---------------------------------------------------------------------------
+
+/// Register the `load-asm` built-in function into `env`.
+///
+/// Usage from Lisp:
+/// ```lisp
+/// (load-asm "path/to/program.asm")
+/// ```
+///
+/// The file is expected to contain NASM-style x86-64 assembly text, for example:
+/// ```asm
+/// ; count from 0 to 4, return 5 in rax
+///     mov rax, 0
+/// loop:
+///     add rax, 1
+///     cmp rax, 5
+///     jne loop
+///     ret
+/// ```
+///
+/// Supported syntax:
+/// - Labels defined with a trailing colon (`loop:`)
+/// - Jump targets as bare label names (`jne loop`)
+/// - Operands: registers (`rax`), immediate decimals/hex (`42`, `0xff`),
+///   and memory references (`[rax]`, `[rax+8]`, `[rbp-16]`)
+/// - Inline comments starting with `;`
+/// - NASM directives `section`, `global`, `extern`, `bits`, `default`
+///   are silently ignored
+///
+/// Returns the value left in RAX after execution as a Lisp `Number`.
+pub fn register_load_asm(env: &Env) {
+    env_set(
+        env,
+        "load-asm".into(),
+        Expr::Func(Rc::new(|args| {
+            if args.len() != 1 {
+                return Err("load-asm: expects exactly 1 argument (filename string)".into());
+            }
+
+            // Extract the filename from a Lisp string or symbol.
+            let filename = match &args[0] {
+                Expr::Str(s) => s.clone(),
+                Expr::Symbol(s) => s.clone(),
+                other => {
+                    return Err(format!(
+                        "load-asm: filename must be a string, got {:?}",
+                        other
+                    ))
+                }
+            };
+
+            // Read the file.
+            let source = fs::read_to_string(&filename)
+                .map_err(|e| format!("load-asm: cannot read '{}': {}", filename, e))?;
+
+            // Parse each line into instructions.
+            let mut asm = Assembler::new();
+            for (line_no, raw_line) in source.lines().enumerate() {
+                match parse_text_instruction(raw_line) {
+                    Ok(Some(instr)) => asm.add_instruction(instr),
+                    Ok(None) => {} // blank / comment / directive
+                    Err(e) => {
+                        return Err(format!(
+                            "load-asm: parse error in '{}' at line {}: {}",
+                            filename,
+                            line_no + 1,
+                            e
+                        ))
+                    }
+                }
+            }
+
+            // Assemble to machine code.
+            let code = asm
+                .assemble()
+                .map_err(|e| format!("load-asm: assembly error: {}", e))?;
+
+            // Allocate executable memory, write the code, flip permissions.
+            let mut jit = JitMemory::new(code.len())
+                .map_err(|e| format!("load-asm: JIT allocation failed: {}", e))?;
+            jit.write(&code)
+                .map_err(|e| format!("load-asm: JIT write failed: {}", e))?;
+            jit.make_executable()
+                .map_err(|e| format!("load-asm: JIT mprotect failed: {}", e))?;
+
+            // Execute and return RAX as a Lisp Number.
+            let result = unsafe {
+                let f = jit
+                    .as_fn()
+                    .map_err(|e| format!("load-asm: JIT fn pointer failed: {}", e))?;
+                f()
+            };
+            Ok(Expr::Number(result as f64))
+        })),
+    );
+}
+```

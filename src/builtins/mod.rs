@@ -42,6 +42,9 @@ pub fn global_env() -> Env {
     base::register_lists(&env);
     utils::register_strings(&env);
     utils::register_misc(&env);
+    utils::register_file(&env);
+    utils::register_io(&env);
+    utils::register_os(&env);
     cubical::register_cubical(&env);
     asm::register_assembler(&env);
     asm::register_load_asm(&env);

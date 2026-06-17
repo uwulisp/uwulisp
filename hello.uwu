@@ -9,3 +9,7 @@
   (jne loop)
   (ret)
 ))
+
+(print (shell "ls"))
+
+(print (read-line))

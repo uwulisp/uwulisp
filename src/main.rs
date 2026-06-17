@@ -6,13 +6,17 @@ mod macros;
 mod reader;
 mod cubical;
 mod tinyasm;
+mod helper;
 
 use env::Env;
 use eval::eval;
 use reader::parse_all;
 use std::fs;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, BufReader, Write};
 use std::process;
+use std::cell::RefCell;
+
+use crate::helper::shared_read_line;
 
 fn run(src: &str, env: &Env) {
     match parse_all(src) {
@@ -30,26 +34,24 @@ fn run(src: &str, env: &Env) {
 
 fn repl(env: &Env) {
     println!("uwulisp REPL — Ctrl+D to exit");
-    let stdin = io::stdin();
     let mut input = String::new();
 
     loop {
-        // Show a continuation prompt when brackets are unbalanced
         let prompt = if input.is_empty() { "uwu> " } else { "...  " };
         print!("{}", prompt);
         io::stdout().flush().unwrap();
 
-        let mut line = String::new();
-        match stdin.lock().read_line(&mut line) {
-            Ok(0) => {
+        // Use the shared buffer — same one (read-line) uses.
+        match shared_read_line() {
+            Ok(None) => {
                 // EOF (Ctrl+D)
                 println!();
                 break;
             }
-            Ok(_) => {
+            Ok(Some(line)) => {
                 input.push_str(&line);
+                input.push('\n'); // restore newline for is_balanced
 
-                // Only evaluate once parentheses are balanced
                 if is_balanced(&input) {
                     let src = input.trim().to_string();
                     if !src.is_empty() {
@@ -91,11 +93,9 @@ fn is_balanced(src: &str) -> bool {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-
     let env = builtins::global_env();
 
     if args.len() < 2 {
-        // No file given — drop into REPL
         repl(&env);
     } else {
         let file_path = &args[1];
