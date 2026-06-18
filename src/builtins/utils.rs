@@ -1,5 +1,5 @@
-use std::io::{self, BufRead, Write};
 use std::rc::Rc;
+use std::thread;
 
 use crate::gc::Heap;
 use crate::{builtins::{display_str, num, str_arg}, env::{Env, env_set}, expr::Expr};
@@ -180,6 +180,115 @@ pub fn register_misc(env: Env, heap: &mut Heap) {
             }
             println!();
             Ok(Expr::List(vec![]))
+        })),
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Threading — isolated worker interpreters
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug)]
+enum ThreadValue {
+    Symbol(String),
+    Number(f64),
+    Str(String),
+    List(Vec<ThreadValue>),
+}
+
+impl ThreadValue {
+    fn from_expr(expr: Expr) -> Result<Self, String> {
+        match expr {
+            Expr::Symbol(s) => Ok(ThreadValue::Symbol(s)),
+            Expr::Number(n) => Ok(ThreadValue::Number(n)),
+            Expr::Str(s) => Ok(ThreadValue::Str(s)),
+            Expr::List(items) => items
+                .into_iter()
+                .map(ThreadValue::from_expr)
+                .collect::<Result<Vec<_>, _>>()
+                .map(ThreadValue::List),
+            Expr::Func(_) => Err("worker returned a builtin function, which cannot cross threads".into()),
+            Expr::Lambda(..) => Err("worker returned a lambda, which cannot cross threads".into()),
+            Expr::Macro(..) => Err("worker returned a macro, which cannot cross threads".into()),
+            Expr::CubicalTerm(_) => Err("worker returned a cubical term, which cannot cross threads".into()),
+        }
+    }
+
+    fn into_expr(self) -> Expr {
+        match self {
+            ThreadValue::Symbol(s) => Expr::Symbol(s),
+            ThreadValue::Number(n) => Expr::Number(n),
+            ThreadValue::Str(s) => Expr::Str(s),
+            ThreadValue::List(items) => {
+                Expr::List(items.into_iter().map(ThreadValue::into_expr).collect())
+            }
+        }
+    }
+}
+
+fn eval_worker_source(src: String) -> Result<ThreadValue, String> {
+    let exprs = crate::reader::parse_all(&src)?;
+    let mut heap = Heap::new();
+    let global_env = crate::builtins::global_env(&mut heap);
+    let mut result = Expr::List(vec![]);
+
+    for expr in exprs {
+        result = crate::eval::eval(&expr, global_env, &mut heap)?;
+    }
+
+    ThreadValue::from_expr(result)
+}
+
+fn parallel_eval_sources(sources: Vec<String>) -> Result<Expr, String> {
+    let handles: Vec<_> = sources
+        .into_iter()
+        .map(|src| thread::spawn(move || eval_worker_source(src)))
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        let value = handle
+            .join()
+            .map_err(|_| "parallel-eval: worker thread panicked".to_string())??;
+        results.push(value.into_expr());
+    }
+
+    Ok(Expr::List(results))
+}
+
+pub fn register_threading(env: Env, heap: &mut Heap) {
+    env_set(
+        heap,
+        env,
+        "thread-eval".into(),
+        Expr::Func(Rc::new(|args, _heap| {
+            if args.len() != 1 {
+                return Err("thread-eval: expects exactly 1 source string".into());
+            }
+            let results = parallel_eval_sources(vec![str_arg(&args[0])?.to_string()])?;
+            match results {
+                Expr::List(mut items) => Ok(items.pop().unwrap_or_else(|| Expr::List(vec![]))),
+                other => Ok(other),
+            }
+        })),
+    );
+
+    env_set(
+        heap,
+        env,
+        "parallel-eval".into(),
+        Expr::Func(Rc::new(|args, _heap| {
+            if args.len() != 1 {
+                return Err("parallel-eval: expects exactly 1 list of source strings".into());
+            }
+            let sources = match &args[0] {
+                Expr::List(items) => items
+                    .iter()
+                    .map(|item| str_arg(item).map(str::to_string))
+                    .collect::<Result<Vec<_>, _>>()?,
+                other => return Err(format!("parallel-eval: expected a list, got {:?}", other)),
+            };
+            parallel_eval_sources(sources)
         })),
     );
 }

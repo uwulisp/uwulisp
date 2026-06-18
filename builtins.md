@@ -292,6 +292,26 @@ Prints each argument followed by a space, then a newline, then returns an empty 
 
 Strings are printed as raw text (without surrounding quotes); all other values use their debug representation.
 
+### `thread-eval`
+
+Evaluates a source string on a worker OS thread and returns the final expression result.
+
+```
+(thread-eval "(+ 1 2)")  →  3
+```
+
+The worker gets a fresh global environment. It can use builtins and definitions included in the source string, but it does not share the caller's current variables, functions, or GC heap. Returned values may be numbers, strings, symbols, or lists of those values.
+
+### `parallel-eval`
+
+Evaluates a list of source strings concurrently, one worker thread per string, and returns the results in the same order as the inputs.
+
+```
+(parallel-eval (list "(+ 1 2)" "(* 3 4)"))  →  (3 12)
+```
+
+Each worker is isolated in the same way as `thread-eval`.
+
 ### `read-line`
 
 Reads a single line of input from standard input.
