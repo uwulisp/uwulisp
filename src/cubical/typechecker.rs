@@ -38,6 +38,23 @@ pub fn lookup_ctx(i: i32, ctx: &Ctx) -> Result<Term, TypeError> {
     }
 }
 
+/// Fallback used by `infer` on neutral-looking forms (application, fst,
+/// snd, ...) whose immediate subterm isn't itself inferable — typically
+/// because it's a bare, un-annotated introduction form (a `TAbs`/`PLam`
+/// beta-redex or an un-annotated `TPair`). In that case `infer` on the
+/// subterm alone can never succeed, but the *whole* term may still reduce
+/// to something with an inferable type (e.g. `(\x. x) U0` reduces to `U0`,
+/// and `fst (a, b)` reduces to `a`). We retry inference on the fully
+/// reduced term, and only give up if reduction made no progress.
+fn infer_via_reduction(ctx: &Ctx, t: &Term, original_err: TypeError) -> Result<Term, TypeError> {
+    let reduced = eval(t);
+    if reduced == *t {
+        Err(original_err)
+    } else {
+        infer(ctx, &reduced)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // TypeError
 // ---------------------------------------------------------------------------
@@ -301,16 +318,16 @@ pub fn infer(ctx: &Ctx, t: &Term) -> Result<Term, TypeError> {
         Term::TUniv(n) => Ok(Term::TUniv(n + 1)),
 
         // Application: f a  where  f : Π(x:A).B
-        Term::TApp(f, a) => {
-            let f_ty = infer(ctx, f)?;
-            match eval(&f_ty) {
+        Term::TApp(f, a) => match infer(ctx, f) {
+            Ok(f_ty) => match eval(&f_ty) {
                 Term::TPi(_, a_ty, b_ty) => {
                     check(ctx, a, &a_ty)?;
                     Ok(eval(&beta(&b_ty, a)))
                 }
                 other => Err(TypeError::ExpectedPi(other)),
-            }
-        }
+            },
+            Err(e) => infer_via_reduction(ctx, t, e),
+        },
 
         // Pi formation: Π(x:A).B : U(max i j)
         Term::TPi(x, a_ty, b_ty) => {
@@ -338,9 +355,8 @@ pub fn infer(ctx: &Ctx, t: &Term) -> Result<Term, TypeError> {
         }
 
         // Path application: p @ r
-        Term::PApp(p, r) => {
-            let p_ty = infer(ctx, p)?;
-            match eval(&p_ty) {
+        Term::PApp(p, r) => match infer(ctx, p) {
+            Ok(p_ty) => match eval(&p_ty) {
                 Term::TPath(a_ty, _, _) => {
                     check_interval(ctx, r)?;
                     let r_ = eval(r);
@@ -350,8 +366,9 @@ pub fn infer(ctx: &Ctx, t: &Term) -> Result<Term, TypeError> {
                     })
                 }
                 other => Err(TypeError::ExpectedPath(other)),
-            }
-        }
+            },
+            Err(e) => infer_via_reduction(ctx, t, e),
+        },
 
         // Interval atoms
         Term::TInterval(_) | Term::TCube(_) => Ok(interval_ty()),
@@ -422,7 +439,21 @@ pub fn infer(ctx: &Ctx, t: &Term) -> Result<Term, TypeError> {
 
         // transport p x : B   where  p : Path U A B,  x : A
         Term::TTransport(p, x) => {
-            let p_ty = infer(ctx, p)?;
+            let p_ty = match p.as_ref() {
+                // `p` is a literal path-lambda (an introduction form, not a
+                // path-typed neutral) — `infer(p)` can never succeed on a
+                // bare PLam, so derive its TPath type directly from the
+                // body instead, the same way `infer` already does for
+                // TAbs-applied-to-argument in TApp.
+                Term::PLam(i, body) => {
+                    let ctx2 = extend_ctx(i.clone(), interval_ty(), ctx);
+                    let a_ty = infer(&ctx2, body)?;
+                    let u = eval(&beta(body, &Term::TInterval(I::I0)));
+                    let v = eval(&beta(body, &Term::TInterval(I::I1)));
+                    Term::TPath(Box::new(a_ty), Box::new(u), Box::new(v))
+                }
+                _ => infer(ctx, p)?,
+            };
             match eval(&p_ty) {
                 Term::TPath(a_ty, _, _) => {
                     let (x_ty, ret_ty) = match eval(&a_ty) {
@@ -510,23 +541,23 @@ pub fn infer(ctx: &Ctx, t: &Term) -> Result<Term, TypeError> {
         }
 
         // fst p : A   where  p : Σ(x:A).B
-        Term::TFst(p) => {
-            let p_ty = infer(ctx, p)?;
-            match eval(&p_ty) {
+        Term::TFst(p) => match infer(ctx, p) {
+            Ok(p_ty) => match eval(&p_ty) {
                 Term::TSigma(_, a_ty, _) => Ok(eval(&a_ty)),
                 other                    => Err(TypeError::ExpectedSigma(other)),
-            }
-        }
+            },
+            Err(e) => infer_via_reduction(ctx, t, e),
+        },
 
         // snd p : B[fst p / x]   where  p : Σ(x:A).B
-        Term::TSnd(p) => {
-            let p_ty = infer(ctx, p)?;
-            match eval(&p_ty) {
+        Term::TSnd(p) => match infer(ctx, p) {
+            Ok(p_ty) => match eval(&p_ty) {
                 Term::TSigma(_, _, b_ty) =>
                     Ok(eval(&beta(&b_ty, &Term::TFst(p.clone())))),
                 other => Err(TypeError::ExpectedSigma(other)),
-            }
-        }
+            },
+            Err(e) => infer_via_reduction(ctx, t, e),
+        },
 
         // Pairs cannot be inferred without annotation
         t @ Term::TPair(_, _) => Err(TypeError::CannotInfer(t.clone())),
@@ -629,10 +660,23 @@ pub fn check(ctx: &Ctx, t: &Term, ty: &Term) -> Result<(), TypeError> {
             other => Err(TypeError::ExpectedSigma(other)),
         },
 
-        // Fall through to inference
-        t => {
-            let ty_ = infer(ctx, t)?;
-            require_equal(ctx, &eval(ty), &eval(&ty_))
+        // Fall through to inference. If `t` isn't directly inferable (e.g.
+        // it's a neutral spine that bottoms out at an un-annotated
+        // introduction form, such as `(\x. x) U0` or `fst (a, b)`), retry
+        // against the fully-reduced term before giving up: `eval` already
+        // knows how to beta/project-reduce these redexes, and the goal type
+        // `ty` is exactly what we need to check the result, even though
+        // ordinary inference can't recover a type for the un-reduced head.
+        t => match infer(ctx, t) {
+            Ok(ty_) => require_equal(ctx, &eval(ty), &eval(&ty_)),
+            Err(e) => {
+                let reduced = eval(t);
+                if reduced == *t {
+                    Err(e)
+                } else {
+                    check(ctx, &reduced, ty)
+                }
+            }
         }
     }
 }

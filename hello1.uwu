@@ -1,28 +1,30 @@
-;; ========================================================================
-;; Cubical Type Theory - Function Extensionality (funext) 증명
-;; ========================================================================
-
-;; funext 자체는 Lisp의 일반 함수이므로 매개변수에 괄호를 사용합니다.
 (define funext
-  (lambda (A)
-    (lambda (B)
-      (lambda (f)
-        (lambda (g)
-          (lambda (p)
-            ;; path-lambda는 일반 내장 함수이므로 이름 뒤에 '를 붙여 기호로 전달합니다.
-            (path-lambda 'i
-              (lambda (x)
-                ;; app, path-app, interval-var 모두 일반 내장 함수입니다.
-                (path-app (app p x) (interval-var 'i))))))))))
+  (lambda (A B f g pointwise-proof)
+    ;; Quote 'i and 'x here so they don't trigger an undefined symbol lookup
+    (path-lambda 'i
+      (clambda 'x
+        (path-app (app pointwise-proof (var 0)) (interval-var 0))))))
 
-;; 1. 인자 정의하기
-(define A (interval-type))
-(define B (lambda (x) (interval-type)))
-(define f (lambda (x) x))
-(define g (lambda (x) x))
+;; 1. Environment setups
+(define A (univ 0))
+(define B (clambda 'x (univ 0)))
+(define f (clambda 'x (var 0)))
+(define g (clambda 'x (var 0)))
 
-;; p는 x를 받아서 'i 축에 대한 경로(Path Lambda)를 생성하는 큐비컬 함수입니다.
-(define p (lambda (x) (path-lambda 'i x)))
+;; 2. Pointwise proof (using quoted binders)
+(define pointwise-proof 
+  (clambda 'x 
+    (path-lambda 'i (var 1))))
 
-;; 2. 이제 funext를 안전하게 호출합니다!
-(((((funext A) B) f) g) p)
+;; 3. Call the corrected funext
+(define id-ext-eq (funext A B f g pointwise-proof))
+
+;; 1. Define the function space type: (x : A) -> B x
+;; (Using standard pi/arrow type constructor if available, or dependent product)
+(define fun-space (pi 'x A (univ 0))) 
+
+;; 2. Define the expected Path type between f and g inside that function space
+(define expected-path-type (path-type fun-space f g))
+
+;; 3. Validate your term against this type
+(print (ctt-check id-ext-eq expected-path-type))
