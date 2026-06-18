@@ -15,4 +15,4 @@ cargo run
 ```
 
 ## document
-[document](https://uwulisp.github.io/document.html)
+[document](https://uwulisp.github.io)
