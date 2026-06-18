@@ -196,7 +196,7 @@ Returns the number of Unicode characters in a string.
 
 ---
 
-### String comparisons
+### `String comparisons`
 
 All string comparisons take exactly two string arguments and return `1.0` or `0.0`.
 
@@ -401,7 +401,7 @@ Executes a command via the system shell (`sh -c`), blocks until completion, and 
 
 These builtins provide a surface-level Lisp API over the internal cubical type theory (CTT) kernel. Every cubical builtin returns an `Expr::CubicalTerm` wrapping the corresponding `Term` variant. Arguments that are expected to be cubical terms must themselves be `Expr::CubicalTerm` values.
 
-### Interval Atoms
+### `Interval Atoms`
 
 #### `interval-zero`
 The interval endpoint `0`.
@@ -469,7 +469,7 @@ Argument must be a `TInterval` term. Passing a pre-normalised `TCube` is an erro
 
 ---
 
-### Variables and Universes
+### `Variables and Universes`
 
 #### `var`
 A de Bruijn-indexed term variable.
@@ -504,7 +504,7 @@ No arguments.
 
 ---
 
-### Functions
+### `Functions`
 
 #### `lambda`
 A term-level lambda abstraction.
@@ -541,7 +541,7 @@ A dependent function type (Π-type).
 
 ---
 
-### Path Types
+### `Path Types`
 
 #### `path-type`
 The identity/path type between two terms over a given type.
@@ -576,7 +576,7 @@ Both arguments must be cubical terms.
 
 ---
 
-### Sigma Types and Pairs
+### `Sigma Types and Pairs`
 
 #### `sigma`
 A dependent pair type (Σ-type).
@@ -622,7 +622,7 @@ Projects the second component of a pair.
 
 ---
 
-### Composition and Transport
+### `Composition and Transport`
 
 #### `hcomp`
 Homogeneous composition. Fills a cube with a given face constraint.
@@ -653,7 +653,7 @@ Both arguments must be cubical terms. `path` is a path in a universe; `x` is the
 
 ---
 
-### Equivalences and Univalence
+### `Equivalences and Univalence`
 
 #### `equiv`
 The type of equivalences between two types.
@@ -708,7 +708,7 @@ Univalence: converts an equivalence into a path between types.
 
 ---
 
-### Glue Types
+### `Glue Types`
 
 Glue types are used to implement the computational content of univalence.
 
@@ -757,7 +757,7 @@ All three arguments must be cubical terms.
 
 ---
 
-### Evaluation and Type-Checking
+### `Evaluation and Type-Checking`
 
 #### `ctt-eval`
 Normalises a closed cubical term.
@@ -803,7 +803,7 @@ Returns `1.0` if `t` and `u` are definitionally equal, `0.0` otherwise.
 
 ---
 
-## Assembler
+## `Assembler`
 
 ### `asm`
 Assembles and JIT-executes a list of x86-64 instructions, returning the value left in `RAX` as a number.
@@ -838,7 +838,7 @@ StringList is list of filename strings
 ; → 5.0
 ```
 
-#### Operand forms
+#### `Operand forms`
 
 | Form                  | Syntax                    | Example           |
 |-----------------------|---------------------------|-------------------|
@@ -848,11 +848,11 @@ StringList is list of filename strings
 
 Immediate values must fit in a signed 32-bit integer.
 
-#### Supported registers
+#### `Supported registers`
 
 `rax`, `rcx`, `rdx`, `rbx`, `rsp`, `rbp`, `rsi`, `rdi`, `r8`–`r15` (case-insensitive).
 
-#### Supported instructions
+#### `Supported instructions`
 
 **Data movement**
 
