@@ -143,15 +143,27 @@ Returns `1.0` if the argument is an empty list, `0.0` otherwise.
 
 ### `map`
 
-`(map f list)` — applies `f` to each element, returns a new list of results
+```
+(map f list)
+```
+
+applies `f` to each element, returns a new list of results
 
 ### `filter`
 
-`(filter pred list)` — keeps elements where `pred` returns truthy
+```
+(filter pred list)
+```
+
+keeps elements where `pred` returns truthy
 
 ### `fold`
 
-(fold f init list) — left fold, calling `f(acc, elem)` each step, seeded with `init`
+```
+(fold f init list)
+```
+ 
+left fold, calling `f(acc, elem)` each step, seeded with `init`
 
 ---
 
