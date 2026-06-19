@@ -1,30 +1,213 @@
-(define funext
-  (lambda (A B f g pointwise-proof)
-    ;; Quote 'i and 'x here so they don't trigger an undefined symbol lookup
-    (path-lambda 'i
-      (clambda 'x
-        (path-app (app pointwise-proof (var 0)) (interval-var 0))))))
+; 1. 산술 연산자 (인자 개수 가변)
+(define sum (+ 1 2 3 4 5))       ; ⇒ 15.0
+(define product (* 2 3 4))       ; ⇒ 24.0
+(define negation (- 10))         ; ⇒ -10.0 (단일 인자는 부호 반전)
+(define remainder-val (% 10 3))  ; ⇒ 1.0
 
-;; 1. Environment setups
+; 2. 비교 연산 및 조건문
+(define x 10)
+(define y 20)
+
+(if (< x y)
+    (print "x는 y보다 작습니다.")  
+    (print "x는 y보다 크거나 같습니다."))
+
+; 리스트 생성 및 기본 조작
+(define my-list (list 1 2 3 4 5))
+(define first-elem (car my-list))  ; ⇒ 1.0
+(define rest-elems (cdr my-list))  ; ⇒ (2 3 4 5)
+(define extended (cons 0 my-list)) ; ⇒ (0 1 2 3 4 5)
+
+; 고차 함수 사용 예제
+; 1. 각 원소에 2를 곱하기 (map)
+(define doubled (map (lambda (n) (* n 2)) my-list)) 
+; ⇒ (2 4 6 8 10)
+
+; 2. 짝수만 필터링 (filter)
+; % 연산자는 결과를 float로 반환하므로 = 연산으로 0.0과 비교합니다.
+(define evens (filter (lambda (n) (= (% n 2) 0.0)) my-list)) 
+; ⇒ (2 4)
+
+; 3. 리스트의 모든 요소 더하기 (fold)
+(define total (fold (lambda (acc elem) (+ acc elem)) 0 my-list)) 
+; ⇒ 15.0
+
+; 인자가 참일 때만 실행하는 `when` 매크로 정의
+(defmacro when (condition body)
+  `(if ,condition ,body ()))
+
+(define age 21)
+(when (>= age 20)
+  (print "성인입니다.")) 
+; ⇒ (if (>= age 20) (print "성인입니다.") ()) 로 확장되어 실행됨
+
+; 리스트 슬라이싱 매크로 (unquote-splicing 예제)
+(define items '(b c))
+(define structural `(a ,@items d)) 
+; ⇒ (a b c d)
+
+; 1. 팩토리얼 (일반적인 꼬리 재귀 - tailcall은 선택 사항이지만 안전함)
+(define factorial
+  (lambda (n acc)
+    (if (= n 0)
+        acc
+        (tailcall factorial (- n 1) (* n acc)))))
+
+(print "5! = " (factorial 5 1)) ; ⇒ 120.0
+
+
+; 2. 짝수/홀수 판별 (상호 재귀 - 스택 안전성을 위해 tailcall 필수)
+(define is-even?
+  (lambda (n)
+    (if (= n 0) 
+        1.0 
+        (tailcall is-odd? (- n 1)))))
+
+(define is-odd?
+  (lambda (n)
+    (if (= n 0) 
+        0.0 
+        (tailcall is-even? (- n 1)))))
+
+(print "10000은 짝수인가? " (is-even? 10000)) ; ⇒ 1.0 (스택 오버플로우 없음)
+
+; 1부터 10까지 더하는 인라인 어셈블리 루프 예제
+(define asm-total
+  (asm '(
+    (mov rax 0)      ; 합계를 저장할 RAX 초기화
+    (mov rcx 10)     ; 카운터 RCX를 10으로 설정
+    (label loop)     ; 루프 라벨 정의
+    (add rax rcx)    ; RAX = RAX + RCX
+    (sub rcx 1)      ; RCX = RCX - 1
+    (cmp rcx 0)      ; RCX가 0인지 비교
+    (jg loop)        ; 0보다 크면 loop로 점프
+    (ret)            ; RAX 값을 가지고 리턴
+  )))
+
+(print "어셈블리 루프 결과 (1~10 합): " asm-total) ; ⇒ 55.0
+
+; 1. 파일 I/O 및 셸 명령어 실행
+(file-write "test.txt" "Hello Lisp World!")
+
+(if (file-exists? "test.txt")
+    (begin
+      (define content (file-read "test.txt"))
+      (print "파일 내용:" content)
+      ; 시스템 셸을 통해 파일 단어 수 세기 (cat test.txt | wc -w)
+      (print "셸 출력:" (shell "cat test.txt"))
+      (file-delete "test.txt"))
+    (print "파일이 없습니다."))
+
+; 2. 병렬 평가 (parallel-eval)
+; 각 문자열은 완전히 독립된 GC 힙과 환경을 가진 별도의 OS 스레드에서 실행됩니다.
+(define thread-results 
+  (parallel-eval (list 
+    "(* 123 456)" 
+    "(if (> 5 3) \"True\" \"False\")"
+    "(+ 10 20)")))
+
+(print "스레드 병렬 실행 결과 리스트:" thread-results)
+; ⇒ (56088.0 "True" 30.0)
+
+; 1. 구간의 끝점 (0과 1) 생성
+(define i0 (interval-zero)) ; ⇒ TInterval(I0)
+(define i1 (interval-one))  ; ⇒ TInterval(I1)
+
+; 2. 구간 변수 생성 (인덱스는 i32로 변환됨)
+(define i (interval-var 0)) ; 변수 i
+(define j (interval-var 1)) ; 변수 j
+
+; 3. 구간 연산 (주의: 이미 정규화된 TCube를 다시 넣으면 에러가 발생합니다)
+(define i-and-j (interval-meet i j)) ; i ∧ j
+(define i-or-j  (interval-join i j))  ; i ∨ j
+(define not-i   (interval-neg i))    ; ¬i
+
+; 1. 드 브루인 인덱스 변수 및 유니버스(Type Universe) 정의
+(define v0 (var 0))      ; de Bruijn 변수
+(define U0 (univ 0))      ; Universe Level 0 (Type)
+
+; 2. 람다 추상화 및 함수 적용 (clambda는 특별한 형태의 람다)
+; 익명 함수 𝜆x. x 정의
+(define id-term (clambda 'x v0)) ;
+; 함수 적용: (id-term i0)
+(define applied-term (app id-term i0)) ;
+
+; 3. 종속 함수 타입 (Π-type) 정의: Π(x : U0). U0
+(define pi-type (pi 'x U0 U0)) ;
+
+; 4. 경로 타입 (Path Type) 생성
+; 타입 U0 위에 존재하는 두 항 v0와 applied-term 사이의 경로 타입
+(define p-type (path-type U0 v0 applied-term)) ;
+
+; 5. 경로 추상화 (Path Lambda) 및 경로 적용
+; 구간 변수 i를 묶어서 경로를 생성
+(define p-lam (path-lambda 'i v0)) ;
+; 경로 p-lam의 i1 지점에서의 값 확인
+(define p-app (path-app p-lam i1)) ;
+
+; 두 타입(A, B) 간의 동치 타입 정의
 (define A (univ 0))
-(define B (clambda 'x (univ 0)))
-(define f (clambda 'x (var 0)))
-(define g (clambda 'x (var 0)))
+(define B (univ 0))
+(define eq-AB (equiv A B)) ; Equiv(A, B) 타입 생성
 
-;; 2. Pointwise proof (using quoted binders)
-(define pointwise-proof 
-  (clambda 'x 
-    (path-lambda 'i (var 1))))
+; 두 타입이 완벽히 똑같다면 항등 동치(Identity Equivalence)를 구성할 수 있습니다.
+; (여기서 id-f, id-g, eta, eps는 적절한 clambda 항이어야 합니다)
+(define id-f (clambda 'x (var 0)))
+(define id-g (clambda 'x (var 0)))
+(define eta  (clambda 'x (var 0)))
+(define eps  (clambda 'x (var 0)))
 
-;; 3. Call the corrected funext
-(define id-ext-eq (funext A B f g pointwise-proof))
+; 동치 원소 직접 생성
+(define my-equiv (make-equiv A B id-f id-g eta eps)) ;
 
-;; 1. Define the function space type: (x : A) -> B x
-;; (Using standard pi/arrow type constructor if available, or dependent product)
-(define fun-space (pi 'x A (univ 0))) 
+; forward map 적용 예시
+(define fwd-result (equiv-fwd my-equiv v0)) ;
 
-;; 2. Define the expected Path type between f and g inside that function space
-(define expected-path-type (path-type fun-space f g))
+; ★ 단가성(Univalence) 적용: 동치 관계를 단가성 경로(Path)로 변환
+(define ua-path (ua my-equiv)) ; TPath(U0, A, B)에 대응하는 경로 항 반환
 
-;; 3. Validate your term against this type
-(print (ctt-check id-ext-eq expected-path-type))
+(define S1 (data-type 'S1))   ;
+(define s (con 'S1 'base))    ;
+(define motive (clambda 'x U0)) ;
+
+(define body-base v0) ;
+(define body-loop (path-lambda 'i v0)) ;
+
+; 'list' 함수를 이용하여 생성자 심볼과 Cubical 변수 값을 안전하게 묶어 전달합니다.
+(define s1-elim-result
+  (elim
+    motive
+    s
+    (list 'base body-base)
+    (list 'loop 'i body-loop)
+  ))
+
+; 결과 확인을 위해 출력해봅니다.
+(print s1-elim-result)
+
+; 1. 변수 및 유니버스 정의
+(define v0 (var 0))       ; 드 브루인 인덱스 0번 변수
+(define U0 (univ 0))       ; Universe Level 0 (Type)
+
+; 2. 항 정의 (𝜆x. x 와 𝜆y. y)
+(define term1 (clambda 'x v0))
+(define term2 (clambda 'y v0))
+
+; 3. 정의상 동치(Definitional Equality) 확인
+(define is-equal? (ctt-equal? term1 term2)) 
+; 결과 => 1.0 (두 항이 알파 동치이므로 일치함)
+
+; 4. 명시적 타겟 타입(Pi-type) 정의
+; 𝜆x. x 가 가질 수 있는 타입 중 하나인 Π(x : U0). U0 타입을 만듭니다.
+(define my-pi-type (pi 'x U0 U0))
+
+; 5. 타입 체크 (ctt-infer 대신 ctt-check 사용)
+; term1이 my-pi-type을 만족하는지 검증합니다.
+(define check-result (ctt-check term1 my-pi-type))
+; 결과 => 1.0 (성공 시 1.0 반환)
+
+; 6. 정규화 및 평가 (Evaluation)
+; interval-zero(i0)를 기점으로 평가 과정을 테스트합니다.
+(define i0 (interval-zero))
+(define normal-form (ctt-eval (app term1 i0)))
+; 결과 => 정상적으로 계산되어 축약된 CubicalTerm 반환
