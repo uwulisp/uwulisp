@@ -39,6 +39,123 @@ pub enum Term {
     TPair(Box<Term>, Box<Term>),
     TFst(Box<Term>),
     TSnd(Box<Term>),
+
+    // -- Inductive types / Higher Inductive Types (HITs) --------------------
+    /// Reference to a declared datatype, used as a type. `TData("S1")` ~ `S¹`.
+    TData(Name),
+    /// Ordinary constructor application: `TCon(datatype, constructor, args)`.
+    /// `args` are positional, in declaration order.
+    TCon(Name, Name, Vec<Term>),
+    /// Path-constructor application: `TPCon(datatype, constructor, args, r)`.
+    /// `r` is the interval argument. `args` are the constructor's ordinary
+    /// arguments only (the interval argument is kept separate as `r`,
+    /// matching how `PLam`/`PApp` separate interval abstraction from term
+    /// abstraction).
+    TPCon(Name, Name, Vec<Term>, Box<Term>),
+    /// Eliminator (dependent recursor) for a datatype.
+    /// `TElim(motive, cases, scrutinee)`.
+    /// `motive : (x : TData(d)) -> U_n`, given as a `TAbs`-shaped term
+    /// (i.e. `motive` itself binds the scrutinee, index 0 in its body).
+    TElim(Box<Term>, Vec<ElimCase>, Box<Term>),
+}
+
+/// One arm of an eliminator. Binds `binders.len()` fresh variables over
+/// `body`, declared outermost-first (matching `ConSig`/`PConSig` telescopes).
+///
+/// For an ordinary-constructor case (`con` names a `ConSig`):
+///   `binders` has length `arity`, one name per constructor argument,
+///   and `body` has type `motive (con binders...)`.
+///
+/// For a path-constructor case (`con` names a `PConSig`):
+///   `binders` has length `arity + 1`: the constructor's ordinary
+///   arguments (outermost-first), then the interval variable LAST.
+///   `body` has type `Path (motive (pcon args... @ i)) face0case face1case`,
+///   where `body` itself is a `PLam`-shaped term over the interval variable
+///   (i.e. the interval binder in `binders` corresponds to a `PApp`/`PLam`
+///   style abstraction, not an ordinary `TAbs`).
+///   Substituting `i = 0` / `i = 1` into `body` must be `definitionally_equal`
+///   to the case's own arguments substituted into the datatype's declared
+///   `face0` / `face1` for that path constructor.
+///
+/// Binder scoping: `binders` is listed outermost-to-innermost (declaration
+/// order), matching `ConSig::arg_tys` / `PConSig::arg_tys`. When pushed into
+/// a context (which is innermost-first — see `Ctx` in typechecker.rs and
+/// equality.rs), the LAST element of `binders` becomes index 0. For a path
+/// constructor, this means the interval variable is index 0 and the last
+/// ordinary argument is index 1, etc. — exactly mirroring how `PLam`/`TAbs`
+/// chains nest in this codebase.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ElimCase {
+    pub con: Name,
+    pub binders: Vec<Name>,
+    pub body: Box<Term>,
+}
+
+// ---------------------------------------------------------------------------
+// Datatype schema (the "data" declaration mechanism)
+// ---------------------------------------------------------------------------
+
+/// Signature of an ordinary (point) constructor.
+/// `arg_tys[k]` is the type of the k-th argument (0-indexed, outermost
+/// first), in a scope where index 0 refers to argument 0, index 1 to
+/// argument 1, etc. — i.e. `arg_tys` forms a telescope exactly like a
+/// chain of `TPi` binders, read outermost-first, indices counting up.
+///
+/// Non-dependent / non-recursive constructors (the common case — `Bool`,
+/// `Nat`, `List`) just use types that don't mention earlier arguments.
+/// A self-referencing argument (recursion, e.g. `suc : Nat -> Nat`) uses
+/// `TData(d)` directly as the argument type — no special-casing needed,
+/// since `TData` is an ordinary term-former.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConSig {
+    pub name: Name,
+    pub arg_tys: Vec<Term>,
+}
+
+impl ConSig {
+    pub fn arity(&self) -> usize {
+        self.arg_tys.len()
+    }
+}
+
+/// Signature of a path constructor (the HIT part).
+/// E.g. for S¹: `PConSig { name: "loop", arg_tys: vec![], face0: TCon(S1,base,[]), face1: TCon(S1,base,[]) }`.
+///
+/// `arg_tys` follows the same telescope convention as `ConSig::arg_tys`
+/// (outermost-first, counting up). `face0` / `face1` are terms in that
+/// same scope of `arg_tys.len()` variables — the ordinary arguments only.
+/// The interval argument is NOT in scope in `face0`/`face1`, since at each
+/// face it is fixed to `I0`/`I1` and therefore is not a free variable of
+/// the boundary term.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PConSig {
+    pub name: Name,
+    pub arg_tys: Vec<Term>,
+    pub face0: Term,
+    pub face1: Term,
+}
+
+impl PConSig {
+    pub fn arity(&self) -> usize {
+        self.arg_tys.len()
+    }
+}
+
+/// A full datatype declaration: `data Name = con1 ... | con2 ... | pcon1 ...`
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Datatype {
+    pub name: Name,
+    pub cons: Vec<ConSig>,
+    pub pcons: Vec<PConSig>,
+}
+
+impl Datatype {
+    pub fn find_con(&self, name: &str) -> Option<&ConSig> {
+        self.cons.iter().find(|c| c.name == name)
+    }
+    pub fn find_pcon(&self, name: &str) -> Option<&PConSig> {
+        self.pcons.iter().find(|c| c.name == name)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +244,42 @@ pub fn show_term(env: &[Name], t: &Term) -> String {
             format!("fst {}", show_term(env, p)),
         Term::TSnd(p) =>
             format!("snd {}", show_term(env, p)),
+        Term::TData(d) => d.clone(),
+        Term::TCon(_, c, args) => {
+            if args.is_empty() {
+                c.clone()
+            } else {
+                let parts: Vec<String> = args.iter().map(|a| show_term(env, a)).collect();
+                format!("({} {})", c, parts.join(" "))
+            }
+        }
+        Term::TPCon(_, c, args, r) => {
+            let mut parts: Vec<String> = args.iter().map(|a| show_term(env, a)).collect();
+            parts.push(format!("@ {}", show_term(env, r)));
+            format!("({} {})", c, parts.join(" "))
+        }
+        Term::TElim(motive, cases, scrut) => {
+            let case_strs: Vec<String> = cases.iter().map(|case| {
+                // binders are outermost-first in declaration; extend the
+                // pretty-printing env the same way, outermost-first, so
+                // nested show_term calls see innermost-first as usual.
+                let mut env2 = case.binders.clone();
+                env2.reverse();
+                env2.extend_from_slice(env);
+                format!(
+                    "{} {} -> {}",
+                    case.con,
+                    case.binders.join(" "),
+                    show_term(&env2, &case.body)
+                )
+            }).collect();
+            format!(
+                "elim[{}] {{ {} }} {}",
+                show_term(env, motive),
+                case_strs.join(" | "),
+                show_term(env, scrut)
+            )
+        }
     }
 }
 
@@ -192,6 +345,25 @@ pub fn shift(d: i32, c: i32, term: &Term) -> Term {
             Term::TPair(b(shift(d, c, a)), b(shift(d, c, bx))),
         Term::TFst(p) => Term::TFst(b(shift(d, c, p))),
         Term::TSnd(p) => Term::TSnd(b(shift(d, c, p))),
+        Term::TData(name) => Term::TData(name.clone()),
+        Term::TCon(data, con, args) =>
+            Term::TCon(data.clone(), con.clone(), args.iter().map(|a| shift(d, c, a)).collect()),
+        Term::TPCon(data, con, args, r) =>
+            Term::TPCon(
+                data.clone(), con.clone(),
+                args.iter().map(|a| shift(d, c, a)).collect(),
+                b(shift(d, c, r)),
+            ),
+        Term::TElim(motive, cases, scrut) =>
+            Term::TElim(
+                b(shift(d, c, motive)),
+                cases.iter().map(|case| ElimCase {
+                    con: case.con.clone(),
+                    binders: case.binders.clone(),
+                    body: b(shift(d, c + case.binders.len() as i32, &case.body)),
+                }).collect(),
+                b(shift(d, c, scrut)),
+            ),
     }
 }
 
@@ -259,6 +431,29 @@ pub fn subst(j: i32, s: &Term, term: &Term) -> Term {
             Term::TPair(b(subst(j, s, a)), b(subst(j, s, bx))),
         Term::TFst(p) => Term::TFst(b(subst(j, s, p))),
         Term::TSnd(p) => Term::TSnd(b(subst(j, s, p))),
+        Term::TData(name) => Term::TData(name.clone()),
+        Term::TCon(data, con, args) =>
+            Term::TCon(data.clone(), con.clone(), args.iter().map(|a| subst(j, s, a)).collect()),
+        Term::TPCon(data, con, args, r) =>
+            Term::TPCon(
+                data.clone(), con.clone(),
+                args.iter().map(|a| subst(j, s, a)).collect(),
+                b(subst(j, s, r)),
+            ),
+        Term::TElim(motive, cases, scrut) =>
+            Term::TElim(
+                b(subst(j, s, motive)),
+                cases.iter().map(|case| {
+                    let n = case.binders.len() as i32;
+                    let s1 = shift(n, 0, s);
+                    ElimCase {
+                        con: case.con.clone(),
+                        binders: case.binders.clone(),
+                        body: b(subst(j + n, &s1, &case.body)),
+                    }
+                }).collect(),
+                b(subst(j, s, scrut)),
+            ),
     }
 }
 

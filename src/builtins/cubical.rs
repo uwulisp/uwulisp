@@ -44,6 +44,14 @@ use crate::gc::Heap;
 //   (glue-elem phi t a)             → TGlueElem(phi, t, a)
 //   (unglue phi te g)               → TUnglue(phi, te, g)
 //
+// Inductive / HIT types
+// ──────────────────────
+//   (data-type name)                → TData(name)
+//   (con dt c args...)              → TCon(dt, c, args)
+//   (pcon dt pc r args...)          → TPCon(dt, pc, args, r)   [r = interval arg]
+//   (elim motive scrut cases...)    → TElim(motive, cases, scrut)
+//     each case: (con-name binder... body)
+//
 // Evaluation / type-checking builtins
 // ─────────────────────────────────────
 //   (ctt-eval  t)           → normalise t; returns Expr::CubicalTerm
@@ -543,6 +551,135 @@ pub fn register_cubical(env: Env, heap: &mut Heap) {
         })),
     );
 
+    // ── inductive / HIT types ────────────────────────────────────────────────
+    //
+    //   (data-type name)                    → TData(name)
+    //   (con datatype constructor args...)  → TCon(datatype, constructor, args)
+    //   (pcon datatype pconstructor r args...) → TPCon(datatype, pconstructor, args, r)
+    //   (elim motive scrutinee cases...)    → TElim(motive, cases, scrutinee)
+    //
+    // Each `case` passed to (elim ...) must be a list of the form:
+    //   (con-name binder1 binder2 ... body)
+    // where `body` is a cubical term and the binders are symbols.
+
+    // (data-type name)  — TData: the type of a declared datatype
+    env_set(
+        heap,
+        env,
+        "data-type".into(),
+        Expr::Func(Rc::new(|args, _heap| {
+            if args.len() != 1 {
+                return Err("data-type: expects (data-type name)".into());
+            }
+            let name = sym_name(&args[0], "data-type")?;
+            Ok(wrap(Term::TData(name)))
+        })),
+    );
+
+    // (con datatype constructor arg0 arg1 ...)  — TCon
+    // datatype and constructor are symbols; remaining args are cubical terms.
+    env_set(
+        heap,
+        env,
+        "con".into(),
+        Expr::Func(Rc::new(|args, _heap| {
+            if args.len() < 2 {
+                return Err("con: expects (con datatype constructor args...)".into());
+            }
+            let dt = sym_name(&args[0], "con")?;
+            let c = sym_name(&args[1], "con")?;
+            let con_args: Result<Vec<Term>, String> =
+                args[2..].iter().map(|a| Ok(ctt(a)?.clone())).collect();
+            Ok(wrap(Term::TCon(dt, c, con_args?)))
+        })),
+    );
+
+    // (pcon datatype pconstructor r arg0 arg1 ...)  — TPCon
+    // r (the interval argument) comes right after the constructor name so
+    // that it mirrors the surface syntax `pcon d c r args...`.
+    env_set(
+        heap,
+        env,
+        "pcon".into(),
+        Expr::Func(Rc::new(|args, _heap| {
+            if args.len() < 3 {
+                return Err(
+                    "pcon: expects (pcon datatype pconstructor r args...)".into(),
+                );
+            }
+            let dt = sym_name(&args[0], "pcon")?;
+            let c = sym_name(&args[1], "pcon")?;
+            let r = ctt(&args[2])?.clone();
+            let ord_args: Result<Vec<Term>, String> =
+                args[3..].iter().map(|a| Ok(ctt(a)?.clone())).collect();
+            Ok(wrap(Term::TPCon(dt, c, ord_args?, Box::new(r))))
+        })),
+    );
+
+    // (elim motive scrutinee case0 case1 ...)  — TElim
+    //
+    // Each `caseN` must be a Lisp list:
+    //   (con-name binder0 binder1 ... body)
+    // The first element is a symbol (constructor name), the last element is a
+    // cubical term (the case body), and everything in between is a symbol
+    // (binder name).  For a path-constructor case the interval binder is the
+    // last binder before the body, matching the ElimCase convention in
+    // syntax.rs.
+    env_set(
+        heap,
+        env,
+        "elim".into(),
+        Expr::Func(Rc::new(|args, _heap| {
+            use crate::cubical::syntax::ElimCase;
+            if args.len() < 2 {
+                return Err(
+                    "elim: expects (elim motive scrutinee case0 case1 ...)".into(),
+                );
+            }
+            let motive = ctt(&args[0])?.clone();
+            let scrut = ctt(&args[1])?.clone();
+
+            let mut cases: Vec<ElimCase> = Vec::new();
+            for raw in &args[2..] {
+                // Each case must be a Lisp list (Expr::List or similar).
+                let elems = match raw {
+                    Expr::List(xs) => xs,
+                    other => {
+                        return Err(format!(
+                            "elim: each case must be a list, got {:?}",
+                            other
+                        ))
+                    }
+                };
+                if elems.len() < 2 {
+                    return Err(
+                        "elim: each case must have at least a constructor name and a body"
+                            .into(),
+                    );
+                }
+                let con_name = sym_name(&elems[0], "elim case")?;
+                // Everything between the constructor name and the final element
+                // is a binder name; the final element is the body term.
+                let binders: Result<Vec<String>, String> = elems[1..elems.len() - 1]
+                    .iter()
+                    .map(|b| sym_name(b, "elim case binder"))
+                    .collect();
+                let body = ctt(elems.last().unwrap())?.clone();
+                cases.push(ElimCase {
+                    con: con_name,
+                    binders: binders?,
+                    body: Box::new(body),
+                });
+            }
+
+            Ok(wrap(Term::TElim(
+                Box::new(motive),
+                cases,
+                Box::new(scrut),
+            )))
+        })),
+    );
+
     // ── evaluation and type-checking ─────────────────────────────────────────
 
     // (ctt-eval t) — normalise a cubical term
@@ -559,7 +696,9 @@ pub fn register_cubical(env: Env, heap: &mut Heap) {
         })),
     );
 
-    // (ctt-infer t) — infer the closed type of a cubical term
+    // (ctt-infer t) — infer the closed type of a cubical term.
+    // Uses infer_closed_dt with an empty datatype slice; pass datatypes via the
+    // full Env integration (see env.rs / infer_with_full_env) for HIT terms.
     env_set(
         heap,
         env,
@@ -569,13 +708,15 @@ pub fn register_cubical(env: Env, heap: &mut Heap) {
                 return Err("ctt-infer: expects exactly 1 argument".into());
             }
             let t = ctt(&args[0])?.clone();
-            let ty = tc::infer_closed(&t).map_err(|e| format!("ctt-infer: {}", e))?;
+            let ty = tc::infer_closed_dt(&[], &t).map_err(|e| format!("ctt-infer: {}", e))?;
             Ok(wrap(ty))
         })),
     );
 
     // (ctt-check t ty) — check that t has type ty in the empty context;
     // returns 1.0 on success and raises a Lisp error on failure.
+    // Uses check_closed_dt with an empty datatype slice; for HIT terms use
+    // the full env integration (check_with_full_env in env.rs).
     env_set(
         heap,
         env,
@@ -586,7 +727,7 @@ pub fn register_cubical(env: Env, heap: &mut Heap) {
             }
             let t = ctt(&args[0])?.clone();
             let ty = ctt(&args[1])?.clone();
-            tc::check_closed(&t, &ty).map_err(|e| format!("ctt-check: {}", e))?;
+            tc::check_closed_dt(&[], &t, &ty).map_err(|e| format!("ctt-check: {}", e))?;
             Ok(Expr::Number(1.0))
         })),
     );

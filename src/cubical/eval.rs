@@ -183,10 +183,135 @@ pub fn eval(t: &Term) -> Term {
         },
 
         // ------------------------------------------------------------------
+        // Inductive types / HITs
+        // ------------------------------------------------------------------
+
+        // Constructors: congruence only — evaluate children, rebuild.
+        Term::TCon(data, con, args) =>
+            Term::TCon(data.clone(), con.clone(), args.iter().map(eval).collect()),
+
+        Term::TPCon(data, con, args, r) =>
+            Term::TPCon(
+                data.clone(), con.clone(),
+                args.iter().map(eval).collect(),
+                Box::new(eval(r)),
+            ),
+
+        // Eliminator: ι-reduction on constructors / path constructors,
+        // else stuck (rebuilt with evaluated children).
+        Term::TElim(motive, cases, scrut) => {
+            let scrut_ = eval(scrut);
+            match &scrut_ {
+                // Ordinary constructor: substitute its args for the
+                // matching case's binders, then evaluate the body.
+                Term::TCon(_, con_name, args) => {
+                    match cases.iter().find(|case| &case.con == con_name) {
+                        Some(case) => eval(&subst_case_args(&case.binders, args, &case.body)),
+                        // No matching case: stuck (ill-typed if the
+                        // eliminator was well-checked, but eval doesn't
+                        // assume well-typedness).
+                        None => Term::TElim(
+                            Box::new(eval(motive)),
+                            eval_cases(cases),
+                            Box::new(scrut_),
+                        ),
+                    }
+                }
+
+                // Path constructor: substitute ordinary args into the
+                // case's (PLam-shaped) body, then PApp at the same
+                // interval argument `r` — mirroring THComp's tube
+                // reducing to its I1 face.
+                Term::TPCon(_, con_name, args, r) => {
+                    match cases.iter().find(|case| &case.con == con_name) {
+                        Some(case) if !case.binders.is_empty() => {
+                            // `case.body` is PLam-shaped: its OWN binder
+                            // (the interval variable) is still open here.
+                            // We substitute the ordinary args directly via
+                            // `subst` at indices 0..arity-1 and deliberately
+                            // do NOT use `subst_case_args`/`beta`: `beta`
+                            // closes (removes) the binder it substitutes,
+                            // but here we must leave the PLam binder open
+                            // so the result is still PApp-able at `r`.
+                            // `subst`'s own PLam case (in syntax.rs) already
+                            // shifts the substituted value by 1 when it
+                            // crosses that binder, so calling `subst` here
+                            // at the *outer* indices 0..arity-1 is correct
+                            // without any manual pre-shifting on our part.
+                            let body_open = subst_ord_args_open(args, &case.body);
+                            eval(&Term::PApp(Box::new(body_open), Box::new((**r).clone())))
+                        }
+                        _ => Term::TElim(
+                            Box::new(eval(motive)),
+                            eval_cases(cases),
+                            Box::new(scrut_),
+                        ),
+                    }
+                }
+
+                // Neutral scrutinee: stuck.
+                _ => Term::TElim(
+                    Box::new(eval(motive)),
+                    eval_cases(cases),
+                    Box::new(scrut_),
+                ),
+            }
+        }
+
+        // ------------------------------------------------------------------
         // Atoms: already in normal form
         // ------------------------------------------------------------------
         _ => t.clone(),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Inductive types / HITs: helpers
+// ---------------------------------------------------------------------------
+
+/// Evaluate the bodies of a case list under no substitution (used only on
+/// the "stuck" paths above, where children still need to be normalized).
+fn eval_cases(cases: &[crate::cubical::syntax::ElimCase]) -> Vec<crate::cubical::syntax::ElimCase> {
+    cases.iter().map(|case| crate::cubical::syntax::ElimCase {
+        con: case.con.clone(),
+        binders: case.binders.clone(),
+        body: Box::new(eval(&case.body)),
+    }).collect()
+}
+
+/// Substitute `args` (outermost-first) for the ordinary-argument positions
+/// of a path-constructor case body, WITHOUT closing/removing any binder.
+///
+/// Unlike `subst_case_args` (used for ordinary constructors, where the
+/// case body has no further binder and we want a fully-closed result),
+/// here `body` is `PLam`-shaped: its own binder (the interval variable)
+/// must stay open, since the caller still needs to `PApp` the result at a
+/// concrete interval term. So we substitute at the *outer* indices
+/// `0..args.len()-1` directly via `subst`, and rely on `subst`'s own
+/// per-binder shifting (see its `PLam`/`TAbs` cases in syntax.rs) to
+/// correctly thread `args` underneath the still-open `PLam` — we must NOT
+/// pre-shift `args` ourselves, since `subst` already does that exactly
+/// once per binder it crosses.
+fn subst_ord_args_open(args: &[Term], body: &Term) -> Term {
+    args.iter().rev().enumerate().fold(body.clone(), |acc, (offset, arg)| {
+        subst(offset as i32, arg, &acc)
+    })
+}
+
+/// Substitute `args` (innermost binder = last arg, matching declaration
+/// order: `binders` and `args` are both outermost-first) for `binders` in
+/// `body`, closing all of them. This generalizes `beta` (single-binder
+/// substitution) to a telescope of `binders.len()` simultaneous binders.
+///
+/// We substitute from the innermost binder outward: the innermost binder
+/// is index 0 in `body`, so we substitute index 0 first with the last arg,
+/// shift-and-close, then the new index 0 (formerly index 1) with the
+/// second-to-last arg, and so on. This is exactly `beta` applied
+/// `binders.len()` times, matching how `apply_globals` in env.rs closes
+/// a telescope of substitutions one at a time.
+fn subst_case_args(binders: &[crate::cubical::syntax::Name], args: &[Term], body: &Term) -> Term {
+    debug_assert_eq!(binders.len(), args.len());
+    args.iter().rev().fold(body.clone(), |acc, arg| beta(&acc, arg))
 }
 
 // ---------------------------------------------------------------------------

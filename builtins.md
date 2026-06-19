@@ -1,8 +1,11 @@
-# Builtin Functions Reference
+---
+title : Builtin Functions Reference
+sidebar:
+  order: 2
+---
+
 
 This document describes all builtin procedures registered in the global environment. Functions are grouped by category.
-
----
 
 ## Arithmetic
 
@@ -50,13 +53,13 @@ Divides the first number by each subsequent number.
 Requires at least one argument. Raises an error on division by zero.
 
 ### `%`
-modulo operator
+Returns the remainder of dividing the first number by the second.
 
 ```
-(% 3 2) → Number
+(% n1 n2)  →  Number
 ```
 
-Requires two argument and return Number
+Requires exactly two arguments.
 
 ---
 
@@ -141,29 +144,32 @@ Returns `1.0` if the argument is an empty list, `0.0` otherwise.
 (null? x)  →  1.0 or 0.0
 ```
 
+---
+
 ### `map`
+Applies a function to each element of a list and returns a new list of results.
 
 ```
-(map f list)
+(map f lst)  →  List
 ```
 
-applies `f` to each element, returns a new list of results
+---
 
 ### `filter`
+Returns a new list containing only the elements for which `pred` returns a truthy value.
 
 ```
-(filter pred list)
+(filter pred lst)  →  List
 ```
 
-keeps elements where `pred` returns truthy
+---
 
 ### `fold`
+Left fold over a list. Calls `f(acc elem)` at each step, seeded with `init`.
 
 ```
-(fold f init list)
+(fold f init lst)  →  Expr
 ```
- 
-left fold, calling `f(acc, elem)` each step, seeded with `init`
 
 ---
 
@@ -196,7 +202,7 @@ Returns the number of Unicode characters in a string.
 
 ---
 
-### `String comparisons`
+### String Comparisons
 
 All string comparisons take exactly two string arguments and return `1.0` or `0.0`.
 
@@ -526,16 +532,14 @@ No arguments.
 
 ### `Functions`
 
-#### `lambda`
-A term-level lambda abstraction.
+#### `clambda`
+A term-level lambda abstraction. Named `clambda` (rather than `lambda`) to avoid shadowing the Lisp special form.
 
 ```
 (clambda name body)  →  TAbs(name, body)
 ```
 
 `name` must be a symbol; `body` must be a cubical term.
-
-use clambda for prevent variable shadowinig
 
 ---
 
@@ -777,6 +781,92 @@ All three arguments must be cubical terms.
 
 ---
 
+### `Inductive and Higher-Inductive Types`
+
+These builtins construct terms of declared inductive and higher-inductive types (HITs). The datatype schema (constructors, path-constructor boundaries) must be registered in the environment via the `Env` integration before type-checking terms built with these forms; the constructors themselves can be built and evaluated without a schema.
+
+#### `data-type`
+The type of a declared inductive or higher-inductive datatype, as a cubical term.
+
+```
+(data-type name)  →  TData(name)
+```
+
+`name` must be a symbol matching a declared datatype.
+
+---
+
+#### `con`
+An ordinary constructor application.
+
+```
+(con datatype constructor arg0 arg1 ...)  →  TCon(datatype, constructor, args)
+```
+
+| Argument      | Role |
+|---------------|------|
+| `datatype`    | Symbol — the datatype this constructor belongs to |
+| `constructor` | Symbol — the constructor name |
+| `arg0 ...`    | Zero or more cubical term arguments |
+
+The datatype name is stored alongside the constructor name so that evaluation and type-checking do not require a global name lookup that could collide across datatypes.
+
+---
+
+#### `pcon`
+A path-constructor application. Path constructors take an interval argument in addition to any ordinary arguments.
+
+```
+(pcon datatype pconstructor r arg0 arg1 ...)  →  TPCon(datatype, pconstructor, args, r)
+```
+
+| Argument       | Role |
+|----------------|------|
+| `datatype`     | Symbol — the datatype |
+| `pconstructor` | Symbol — the path constructor name |
+| `r`            | Cubical term — the interval argument |
+| `arg0 ...`     | Zero or more ordinary cubical term arguments |
+
+The interval argument `r` is listed third (immediately after the constructor name) to match the surface reading "path constructor applied to an interval point". Internally it is stored as the last field of `TPCon`.
+
+---
+
+#### `elim`
+The eliminator (recursor) for an inductive or higher-inductive type.
+
+```
+(elim motive scrutinee case0 case1 ...)  →  TElim(motive, cases, scrutinee)
+```
+
+| Argument     | Role |
+|--------------|------|
+| `motive`     | Cubical term — the return-type motive (a function over the datatype) |
+| `scrutinee`  | Cubical term — the element being eliminated |
+| `caseN`      | A case clause (see below) |
+
+Each case clause is a list of the form:
+
+```
+(constructor-name binder0 binder1 ... body)
+```
+
+The first element is a symbol naming the constructor this case handles. Everything between the constructor name and the final element is a binder name (symbol). The final element is the case body, a cubical term. For a path-constructor case the interval binder is listed last among the binders, and the body is expected to be a `PLam`-shaped term over that variable.
+
+**Example — S¹ eliminator:**
+
+```lisp
+(elim
+  motive                        ; the motive P : S¹ → U
+  scrutinee                     ; the element of S¹ to eliminate
+  (base body-base)              ; ordinary constructor case: no binders
+  (loop i body-loop)            ; path constructor case: interval binder i
+)
+```
+
+`body-loop` must be a `(path-lambda ...)` term whose application at `(interval-zero)` and `(interval-one)` agrees with `body-base`, matching the path-constructor boundary equations declared in the datatype schema.
+
+---
+
 ### `Evaluation and Type-Checking`
 
 #### `ctt-eval`
@@ -797,7 +887,7 @@ Infers the type of a closed cubical term.
 (ctt-infer t)  →  CubicalTerm
 ```
 
-Returns the inferred type as a cubical term. Errors if type inference fails.
+Returns the inferred type as a cubical term. Errors if type inference fails. For terms involving `data-type`, `con`, `pcon`, or `elim`, the relevant datatype schemas must be registered in the environment; this builtin passes an empty schema slice and will error on unregistered datatypes.
 
 ---
 
@@ -808,7 +898,7 @@ Checks that a term has a given type in the empty context.
 (ctt-check t ty)  →  1.0
 ```
 
-Returns `1.0` on success. Raises a Lisp error on type-checking failure.
+Returns `1.0` on success. Raises a Lisp error on type-checking failure. For terms involving inductive types, the relevant datatype schemas must be registered in the environment; this builtin passes an empty schema slice and will error on unregistered datatypes.
 
 ---
 

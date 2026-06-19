@@ -53,6 +53,20 @@ pub fn term_size(t: &Term) -> usize {
         Term::TMkEquiv(a, b, f, g, e, s) =>
             1 + term_size(a) + term_size(b) + term_size(f)
               + term_size(g) + term_size(e) + term_size(s),
+
+        // Inductive types / HITs
+        Term::TData(_) => 1,
+
+        Term::TCon(_, _, args) =>
+            1 + args.iter().map(term_size).sum::<usize>(),
+
+        Term::TPCon(_, _, args, r) =>
+            1 + args.iter().map(term_size).sum::<usize>() + term_size(r),
+
+        Term::TElim(motive, cases, scrut) =>
+            1 + term_size(motive)
+              + cases.iter().map(|c| term_size(&c.body)).sum::<usize>()
+              + term_size(scrut),
     }
 }
 
@@ -356,6 +370,64 @@ pub fn eta_eq(fuel: usize, ctx: &Ctx, t1: &Term, t2: &Term) -> EtaResult {
     }
     if let (Term::TSnd(p1), Term::TSnd(p2)) = (t1, t2) {
         return eta_eq(fuel, ctx, p1, p2);
+    }
+
+    // ------------------------------------------------------------------
+    // Inductive types / HITs (structural: no fuel consumed)
+    // ------------------------------------------------------------------
+
+    // TData is an atom — equality is already handled by the `t1 == t2`
+    // check at the top (same name ↔ equal), so reaching here means
+    // different names → NotEqual.  No extra arm needed; the fall-through
+    // at the end handles it.
+
+    // Constructor congruence: same datatype, same constructor, check args.
+    if let (Term::TCon(d1, c1, args1), Term::TCon(d2, c2, args2)) = (t1, t2) {
+        if d1 != d2 || c1 != c2 || args1.len() != args2.len() {
+            return NotEqual;
+        }
+        return args1.iter().zip(args2.iter())
+            .fold(Equal, |acc, (a1, a2)| and_result(acc, eta_eq(fuel, ctx, a1, a2)));
+    }
+
+    // Path-constructor congruence: same datatype, same path-constructor,
+    // check ordinary args and then the interval argument.
+    if let (Term::TPCon(d1, c1, args1, r1), Term::TPCon(d2, c2, args2, r2)) = (t1, t2) {
+        if d1 != d2 || c1 != c2 || args1.len() != args2.len() {
+            return NotEqual;
+        }
+        let args_eq = args1.iter().zip(args2.iter())
+            .fold(Equal, |acc, (a1, a2)| and_result(acc, eta_eq(fuel, ctx, a1, a2)));
+        return and_result(args_eq, eta_eq(fuel, ctx, r1, r2));
+    }
+
+    // Eliminator congruence: check motive, each matching case body
+    // (case order and constructor names must agree), and the scrutinee.
+    // This only fires when both sides are stuck TElim neutrals, which
+    // requires the scrutinees to be neutral — so this is genuinely the
+    // structural congruence on eliminators, not a reduction step.
+    if let (Term::TElim(m1, cases1, s1), Term::TElim(m2, cases2, s2)) = (t1, t2) {
+        if cases1.len() != cases2.len() {
+            return NotEqual;
+        }
+        let cases_eq = cases1.iter().zip(cases2.iter()).fold(Equal, |acc, (c1, c2)| {
+            if c1.con != c2.con || c1.binders.len() != c2.binders.len() {
+                return NotEqual;
+            }
+            // Build the extended context for this case's binders.
+            // binders is outermost-first; we push them innermost-first
+            // so the last binder ends up at index 0, matching the de Bruijn
+            // convention used everywhere else in this file.
+            let mut case_ctx: Vec<(Name, Term)> = c1.binders.iter().rev()
+                .map(|b| (b.clone(), Term::TUniv(0)))
+                .collect();
+            case_ctx.extend_from_slice(ctx);
+            and_result(acc, eta_eq(fuel, &case_ctx, &c1.body, &c2.body))
+        });
+        return and_result(
+            and_result(cases_eq, eta_eq(fuel, ctx, m1, m2)),
+            eta_eq(fuel, ctx, s1, s2),
+        );
     }
 
     NotEqual
