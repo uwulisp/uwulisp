@@ -1,9 +1,0 @@
-Let me re-read the current env.rs and think about what's needed:The changes needed are clear and minimal. `GlobalEnv` needs to also carry `Datatype` declarations, and the `infer`/`check` calls need to route through `infer_dt`/`check_dt`. The cleanest approach: introduce a `Env` struct that holds both, keeping `GlobalEnv` as a type alias for backward compat, and adding a `datatypes` field.The changes are intentionally minimal:
-
-**New `Env` struct** wraps `defs: GlobalEnv` and `datatypes: Vec<Datatype>` together. It derives `Default` so `Env::new()` works, and has three methods: `define` (push a definition), `declare_datatype` (register a HIT/inductive declaration), and `find_datatype` (name lookup for convenience). The parser will call `define` and `declare_datatype` as it processes top-level declarations.
-
-**Everything existing is preserved unchanged** — `GlobalEnv`, `global_ctx`, `apply_globals`, `subst_global`, `infer_with_env`, `check_with_env` all have the same signatures and behavior, so any existing call sites compile without modification.
-
-**Two new functions** at the bottom: `infer_with_full_env` and `check_with_full_env` take `&Env` and route to `infer_dt`/`check_dt` with both `env.datatypes` and `global_ctx(&env.defs)`. These are what the REPL/main loop will call after you have a parser.
-
-One thing to note for the parser: when it parses a new definition `let x : T = v`, it should call `apply_globals` on `T` and `v` before calling `env.define(x, T, v)`, exactly as before. Datatype declarations are different — `Datatype`/`ConSig`/`PConSig` don't embed `Term` values that reference globals (they're schemas, not terms), so `apply_globals` is not needed for `declare_datatype`.
