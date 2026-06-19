@@ -3,12 +3,13 @@
 // Depends on:
 //   crate::interval::I
 //   crate::syntax::{Term, Name, shift, beta}
-//   crate::eval::{eval, is_top_dnf, is_bot_dnf}
+//   crate::eval::{is_top_dnf, is_bot_dnf}
 
 use std::collections::HashMap;
 
-use crate::cubical::eval::{eval, is_bot_dnf, is_top_dnf};
+use crate::cubical::eval::{is_bot_dnf, is_top_dnf};
 use crate::cubical::interval::I;
+use crate::cubical::nbe::nbe_eval;
 use crate::cubical::syntax::{Name, Term, beta, shift};
 
 /// A context maps de Bruijn names to their types.
@@ -113,22 +114,22 @@ pub fn and_result(a: EtaResult, b: EtaResult) -> EtaResult {
 // ---------------------------------------------------------------------------
 
 pub fn definitionally_equal(t1: &Term, t2: &Term) -> bool {
-    let v1 = eval(t1);
-    let v2 = eval(t2);
+    let v1 = nbe_eval(t1);
+    let v2 = nbe_eval(t2);
     v1 == v2 || eta_eq(initial_fuel(&v1, &v2), &Vec::new(), &v1, &v2) == EtaResult::Equal
 }
 
 pub fn definitionally_equal_ctx(ctx: &Ctx, t1: &Term, t2: &Term) -> bool {
-    let v1 = eval(t1);
-    let v2 = eval(t2);
+    let v1 = nbe_eval(t1);
+    let v2 = nbe_eval(t2);
     v1 == v2 || eta_eq(initial_fuel(&v1, &v2), ctx, &v1, &v2) == EtaResult::Equal
 }
 
 /// Like `definitionally_equal_ctx` but surfaces fuel exhaustion as a distinct
 /// `EtaResult` so callers can emit a proper error.
 pub fn definitionally_equal_ctx_r(ctx: &Ctx, t1: &Term, t2: &Term) -> EtaResult {
-    let v1 = eval(t1);
-    let v2 = eval(t2);
+    let v1 = nbe_eval(t1);
+    let v2 = nbe_eval(t2);
     if v1 == v2 {
         EtaResult::Equal
     } else {
@@ -144,11 +145,11 @@ pub fn definitionally_equal_ctx_r(ctx: &Ctx, t1: &Term, t2: &Term) -> EtaResult 
 pub fn reduce_papp_by_type(ctx: &Ctx, p: &Term, r: &Term) -> Option<Term> {
     match infer_ty(ctx, p) {
         Some(Term::TPath(_, u, v)) => {
-            let r_ = eval(r);
+            let r_ = nbe_eval(r);
             if is_bot_dnf(&r_) || r_ == Term::TInterval(I::I0) {
-                Some(eval(&u))
+                Some(nbe_eval(&u))
             } else if is_top_dnf(&r_) || r_ == Term::TInterval(I::I1) {
-                Some(eval(&v))
+                Some(nbe_eval(&v))
             } else {
                 None
             }
@@ -162,13 +163,13 @@ fn infer_ty(ctx: &Ctx, t: &Term) -> Option<Term> {
         Term::TVar(i) => {
             let i = *i as usize;
             if i < ctx.len() {
-                Some(eval(&shift((i + 1) as i32, 0, &ctx[i].1)))
+                Some(nbe_eval(&shift((i + 1) as i32, 0, &ctx[i].1)))
             } else {
                 None
             }
         }
         Term::TApp(f, a) => match infer_ty(ctx, f) {
-            Some(Term::TPi(_, _, b_ty)) => Some(eval(&beta(&b_ty, a))),
+            Some(Term::TPi(_, _, b_ty)) => Some(nbe_eval(&beta(&b_ty, a))),
             _ => None,
         },
         _ => None,
@@ -184,13 +185,13 @@ fn infer_neutral_ty(ctx: &Ctx, t: &Term) -> Option<Term> {
         Term::TVar(i) => {
             let i = *i as usize;
             if i < ctx.len() {
-                Some(eval(&shift((i + 1) as i32, 0, &ctx[i].1)))
+                Some(nbe_eval(&shift((i + 1) as i32, 0, &ctx[i].1)))
             } else {
                 None
             }
         }
         Term::TApp(f, a) => match infer_neutral_ty(ctx, f) {
-            Some(Term::TPi(_, _, b_ty)) => Some(eval(&beta(&b_ty, a))),
+            Some(Term::TPi(_, _, b_ty)) => Some(nbe_eval(&beta(&b_ty, a))),
             _ => None,
         },
         _ => None,
@@ -202,7 +203,7 @@ fn infer_neutral_ty(ctx: &Ctx, t: &Term) -> Option<Term> {
 /// a lambda. Returns `None` when the type cannot be determined.
 pub fn infer_lam_dom(ctx: &Ctx, neutral: &Term) -> Option<Term> {
     match infer_neutral_ty(ctx, neutral) {
-        Some(Term::TPi(_, dom_ty, _)) => Some(eval(&dom_ty)),
+        Some(Term::TPi(_, dom_ty, _)) => Some(nbe_eval(&dom_ty)),
         _ => None,
     }
 }
@@ -281,7 +282,7 @@ fn eta_eq_uncached(fuel: usize, ctx: &Ctx, t1: &Term, t2: &Term, memo: &mut EtaM
             .unwrap_or(Term::TUniv(0));
         let mut ctx2 = vec![(x.clone(), dom)];
         ctx2.extend_from_slice(ctx);
-        return eta_eq_memo(fuel - 1, &ctx2, &eval(b1), &eval(b2), memo);
+        return eta_eq_memo(fuel - 1, &ctx2, &nbe_eval(b1), &nbe_eval(b2), memo);
     }
 
     // Only RHS is a lambda — eta-expand neutral LHS.
@@ -294,11 +295,11 @@ fn eta_eq_uncached(fuel: usize, ctx: &Ctx, t1: &Term, t2: &Term, memo: &mut EtaM
                 eta_eq_memo(
                     fuel - 1,
                     &ctx2,
-                    &eval(&Term::TApp(
+                    &nbe_eval(&Term::TApp(
                         Box::new(shift(1, 0, t1)),
                         Box::new(Term::TVar(0)),
                     )),
-                    &eval(b2),
+                    &nbe_eval(b2),
                     memo,
                 )
             }
@@ -315,8 +316,8 @@ fn eta_eq_uncached(fuel: usize, ctx: &Ctx, t1: &Term, t2: &Term, memo: &mut EtaM
                 eta_eq_memo(
                     fuel - 1,
                     &ctx2,
-                    &eval(b1),
-                    &eval(&Term::TApp(
+                    &nbe_eval(b1),
+                    &nbe_eval(&Term::TApp(
                         Box::new(shift(1, 0, t2)),
                         Box::new(Term::TVar(0)),
                     )),
@@ -334,7 +335,7 @@ fn eta_eq_uncached(fuel: usize, ctx: &Ctx, t1: &Term, t2: &Term, memo: &mut EtaM
     if let (Term::PLam(i, b1), Term::PLam(_, b2)) = (t1, t2) {
         let mut ctx2 = vec![(i.clone(), Term::TIntervalTy)];
         ctx2.extend_from_slice(ctx);
-        return eta_eq_memo(fuel - 1, &ctx2, &eval(b1), &eval(b2), memo);
+        return eta_eq_memo(fuel - 1, &ctx2, &nbe_eval(b1), &nbe_eval(b2), memo);
     }
 
     // Only RHS is a path-lambda.
@@ -344,11 +345,11 @@ fn eta_eq_uncached(fuel: usize, ctx: &Ctx, t1: &Term, t2: &Term, memo: &mut EtaM
         return eta_eq_memo(
             fuel - 1,
             &ctx2,
-            &eval(&Term::PApp(
+            &nbe_eval(&Term::PApp(
                 Box::new(shift(1, 0, t1)),
                 Box::new(Term::TVar(0)),
             )),
-            &eval(b2),
+            &nbe_eval(b2),
             memo,
         );
     }
@@ -360,8 +361,8 @@ fn eta_eq_uncached(fuel: usize, ctx: &Ctx, t1: &Term, t2: &Term, memo: &mut EtaM
         return eta_eq_memo(
             fuel - 1,
             &ctx2,
-            &eval(b1),
-            &eval(&Term::PApp(
+            &nbe_eval(b1),
+            &nbe_eval(&Term::PApp(
                 Box::new(shift(1, 0, t2)),
                 Box::new(Term::TVar(0)),
             )),
@@ -429,14 +430,14 @@ fn eta_eq_uncached(fuel: usize, ctx: &Ctx, t1: &Term, t2: &Term, memo: &mut EtaM
                 fuel - 1,
                 ctx,
                 a1,
-                &eval(&Term::TFst(Box::new(t2.clone()))),
+                &nbe_eval(&Term::TFst(Box::new(t2.clone()))),
                 memo,
             ),
             eta_eq_memo(
                 fuel - 1,
                 ctx,
                 b1,
-                &eval(&Term::TSnd(Box::new(t2.clone()))),
+                &nbe_eval(&Term::TSnd(Box::new(t2.clone()))),
                 memo,
             ),
         );
@@ -446,14 +447,14 @@ fn eta_eq_uncached(fuel: usize, ctx: &Ctx, t1: &Term, t2: &Term, memo: &mut EtaM
             eta_eq_memo(
                 fuel - 1,
                 ctx,
-                &eval(&Term::TFst(Box::new(t1.clone()))),
+                &nbe_eval(&Term::TFst(Box::new(t1.clone()))),
                 a2,
                 memo,
             ),
             eta_eq_memo(
                 fuel - 1,
                 ctx,
-                &eval(&Term::TSnd(Box::new(t1.clone()))),
+                &nbe_eval(&Term::TSnd(Box::new(t1.clone()))),
                 b2,
                 memo,
             ),
