@@ -8,6 +8,7 @@ mod helper;
 mod macros;
 mod reader;
 mod tinyasm;
+mod vm;
 
 use eval::{eval, with_import_base};
 use gc::{GcHandle, Heap};
