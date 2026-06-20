@@ -171,26 +171,45 @@ pub(crate) fn vm_value_to_expr(v: VmValue, _heap: &mut Heap) -> Result<Expr, Str
 }
 
 /// Convert an `Expr` to a `VmValue`, bridging built-in and lambda values.
-pub(crate) fn expr_to_vm_value(expr: &Expr, heap: &Heap) -> Result<VmValue, String> {
+pub(crate) fn expr_to_vm_value(expr: &Expr, heap: &mut Heap) -> Result<VmValue, String> {
     match expr {
         Expr::Number(n) => Ok(VmValue::Number(*n)),
         Expr::Str(s) => Ok(VmValue::Str(s.clone())),
         Expr::Symbol(s) => Ok(VmValue::Symbol(s.clone())),
         Expr::List(items) => {
-            let vs: Result<Vec<VmValue>, String> =
-                items.iter().map(|e| expr_to_vm_value(e, heap)).collect();
-            Ok(VmValue::List(vs?))
+            let mut vs = Vec::with_capacity(items.len());
+            for e in items {
+                vs.push(expr_to_vm_value(e, heap)?);
+            }
+            Ok(VmValue::List(vs))
         }
         Expr::Func(f) => {
             Ok(VmValue::Builtin(Rc::clone(f)))
         }
-        Expr::Lambda(_params, _body, _env) => {
-            // Lambdas stored in the environment by the tree-walker cannot be
-            // executed by the VM's compiled chunk machinery — the body was
-            // never compiled into bytecode.  Signal "uncompilable" so that
-            // the vm_eval fallback gate routes the whole expression to the
-            // tree-walking evaluator instead.
-            Err("uncompilable: Lambda".into())
+        Expr::Lambda(params, body_expr, captured_env) => {
+            let key = crate::vm::cache::CompileCache::key(body_expr);
+            let chunk = crate::vm::CACHE.with(|c| c.borrow().get_chunk(&key).cloned())
+                .unwrap_or_else(|| {
+                    if !crate::vm::compiler::is_compilable(body_expr, heap, *captured_env) {
+                        let mut c = Chunk::new();
+                        c.emit(Op::TreeEval((**body_expr).clone()));
+                        return c;
+                    }
+                    let chunk = crate::vm::compiler::Compiler::compile(body_expr, *captured_env, heap)
+                        .unwrap_or_else(|_| {
+                            let mut c = Chunk::new();
+                            c.emit(Op::TreeEval((**body_expr).clone()));
+                            c
+                        });
+                    crate::vm::CACHE.with(|c| c.borrow_mut().insert_chunk(key.clone(), chunk.clone()));
+                    chunk
+                });
+            Ok(VmValue::Closure {
+                chunk: Rc::new(chunk),
+                params: params.clone(),
+                body_expr: body_expr.clone(),
+                env: *captured_env,
+            })
         }
         Expr::Macro(..) => Err("uncompilable: Macro".into()),
         Expr::CubicalTerm(_) => Err("uncompilable: CubicalTerm".into()),
@@ -445,6 +464,21 @@ impl<'h> VM<'h> {
                 // ── TailCall ─────────────────────────────────────────────────
                 Op::TailCall(n_args) => {
                     self.do_call(n_args, /*tail=*/ true)?;
+                }
+
+                // ── TreeEval ─────────────────────────────────────────────────
+                Op::TreeEval(expr) => {
+                    let env = self.frames[frame_idx].env;
+                    let result = crate::eval::eval_tree(&expr, env, self.heap)?;
+                    let val = expr_to_vm_value(&result, self.heap)
+                        .unwrap_or(VmValue::List(vec![]));
+                    
+                    if self.frames.len() == 1 {
+                        return Ok(val);
+                    }
+                    let frame = self.frames.pop().unwrap();
+                    self.stack.truncate(frame.stack_base);
+                    self.stack.push(val);
                 }
             }
         }

@@ -1,0 +1,24 @@
+tested with hello1.uwu
+
+vm 
+real    0m0.036s
+user    0m0.028s
+sys     0m0.009s
+
+tree-walking
+real    0m0.030s
+user    0m0.027s
+sys     0m0.004s
+
+
+tested with bench.uwu
+
+vm
+real    0m0.006s
+user    0m0.002s
+sys     0m0.004s
+
+tree-walking
+real    0m0.006s
+user    0m0.003s
+sys     0m0.004s

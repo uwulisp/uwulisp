@@ -202,6 +202,9 @@ pub enum Op {
     /// new one.
     TailCall(usize),
 
+    /// Fall back to tree-walker for this expression.
+    TreeEval(Expr),
+
     /// Pop `n` values from the stack (right-to-left, so the first-pushed ends
     /// up at the front of the list) and push the resulting `Value::List`.
     MakeList(usize),

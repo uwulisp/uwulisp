@@ -902,7 +902,8 @@ fn is_compilable_rec(expr: &Expr, qq_depth: usize, heap: &Heap, env: GcHandle) -
             }
         }
         Expr::Func(_) => true,
-        Expr::Lambda(..) | Expr::Macro(..) | Expr::CubicalTerm(_) => false,
+        Expr::Lambda(_, body, env) => is_compilable_rec(body, qq_depth, heap, *env),
+        Expr::Macro(..) | Expr::CubicalTerm(_) => false,
         Expr::List(items) => {
             if items.is_empty() {
                 return true;
