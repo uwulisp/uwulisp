@@ -57,6 +57,7 @@ pub fn global_env(heap: &mut Heap) -> Env {
     utils::register_io(env, heap);
     utils::register_os(env, heap);
     cubical::register_cubical(env, heap);
+    cubical::register_load_cubical(env, heap);
     asm::register_assembler(env, heap);
     asm::register_load_asm(env, heap);
     asm::register_load_asm_parallel(env, heap);

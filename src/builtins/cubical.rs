@@ -1,10 +1,12 @@
 use std::rc::Rc;
+use std::result;
 
-use crate::builtins::num;
-use crate::cubical::eval as ctt_eval_mod;
+use crate::builtins::{cubical, num};
+use crate::cubical::{RunError, RunOutput, eval as ctt_eval_mod};
 use crate::cubical::interval::{I, eval_interval};
 use crate::cubical::syntax::Term;
 use crate::cubical::typechecker as tc;
+use crate::cubical::run;
 use crate::env::{Env, env_set};
 use crate::expr::Expr;
 use crate::gc::Heap;
@@ -739,6 +741,40 @@ pub fn register_cubical(env: Env, heap: &mut Heap) {
             } else {
                 0.0
             }))
+        })),
+    );
+}
+pub fn register_load_cubical(env: Env, heap: &mut Heap) {
+    env_set(
+        heap,
+        env,
+        "load-ctt".into(),
+        Expr::Func(Rc::new(|args, heap| {
+            if args.len() != 1 {
+                return Err(format!(
+                    "load-ctt: expected 1 argument, got {}",
+                    args.len()
+                ));
+            }
+
+            let filename = match &args[0] {
+                Expr::Str(s) => s.clone(),
+                Expr::Symbol(s) => s.clone(),
+                other => {
+                    return Err(format!(
+                        "load-ctt: filename must be a string, got {:?}",
+                        other
+                    ));
+                }
+            };
+
+            let output = cubical::run(&filename).map_err(|e| e.to_string())?;
+
+            Ok(Expr::List(vec![
+                Expr::Str(output.name),
+                Expr::CubicalTerm(Box::new(output.ty)),
+                Expr::CubicalTerm(Box::new(output.value)),
+            ]))
         })),
     );
 }
