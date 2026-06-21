@@ -1,4 +1,4 @@
-# map about how **uwulisp** code is executed
+# how **uwulisp** code is executed
 
 ### 1. Lexical Analysis and Parsing (Frontend)
 The execution of any `uwulisp` expression begins in [src/reader.rs](/src/reader.rs).
