@@ -897,11 +897,21 @@ impl Parser {
         Ok(names)
     }
 
+    fn is_decl_start(&self) -> bool {
+        matches!(
+            &self.peek().kind,
+            TokenKind::Ident(name) if name == "def" || name == "data"
+        )
+    }
+
     fn starts_atom(&self) -> bool {
-        match &self.peek().kind {
-            TokenKind::Ident(_) | TokenKind::Int(_) | TokenKind::LParen => true,
-            _ => false,
+        if self.is_decl_start() {
+            return false;
         }
+        matches!(
+            &self.peek().kind,
+            TokenKind::Ident(_) | TokenKind::Int(_) | TokenKind::LParen
+        )
     }
 
     fn expect_ident(&mut self, message: impl Into<String>) -> Result<Name, ParseError> {
@@ -1076,6 +1086,51 @@ mod tests {
                 assert_eq!(dt.cons[1].arg_tys, vec![Term::TData("Nat".to_string())]);
             }
             _ => panic!("expected data declaration"),
+        }
+    }
+
+    #[test]
+    fn parses_def_then_data() {
+        let src = "def main : U1 = U0\ndata Nat = | zero : Nat | suc : Nat -> Nat";
+        let decls = parse_program(src).unwrap();
+        assert_eq!(decls.len(), 2);
+        match &decls[0] {
+            Decl::Def { name, .. } => assert_eq!(name, "main"),
+            _ => panic!("expected def declaration"),
+        }
+        match &decls[1] {
+            Decl::Data(dt) => assert_eq!(dt.name, "Nat"),
+            _ => panic!("expected data declaration"),
+        }
+    }
+
+    #[test]
+    fn parses_data_then_def() {
+        let src = "data Nat = | zero : Nat | suc : Nat -> Nat\ndef main : U1 = U0";
+        let decls = parse_program(src).unwrap();
+        assert_eq!(decls.len(), 2);
+        match &decls[0] {
+            Decl::Data(dt) => assert_eq!(dt.name, "Nat"),
+            _ => panic!("expected data declaration"),
+        }
+        match &decls[1] {
+            Decl::Def { name, .. } => assert_eq!(name, "main"),
+            _ => panic!("expected def declaration"),
+        }
+    }
+
+    #[test]
+    fn parses_two_defs() {
+        let src = "def a : U0 = U0\ndef b : U0 = U0";
+        let decls = parse_program(src).unwrap();
+        assert_eq!(decls.len(), 2);
+        match &decls[0] {
+            Decl::Def { name, .. } => assert_eq!(name, "a"),
+            _ => panic!("expected def declaration"),
+        }
+        match &decls[1] {
+            Decl::Def { name, .. } => assert_eq!(name, "b"),
+            _ => panic!("expected def declaration"),
         }
     }
 

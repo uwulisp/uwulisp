@@ -1,0 +1,4 @@
+def main : U1 = U0
+data S1 =
+  | base : S1
+  | loop : S1 [ base , base ]

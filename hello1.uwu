@@ -211,3 +211,5 @@
 (define i0 (interval-zero))
 (define normal-form (ctt-eval (app term1 i0)))
 ; Result => Evaluated and returns the reduced CubicalTerm
+
+(load-ctt "hello.ctt")
