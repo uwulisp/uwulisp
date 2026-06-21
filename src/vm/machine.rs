@@ -240,7 +240,7 @@ pub struct CallFrame {
     /// arguments; the callee value itself is *below* `stack_base`).
     stack_base: usize,
     /// The environment frame for variable lookup and binding.
-    env: GcHandle,
+    pub(crate) env: GcHandle,
     /// Parameter names of the closure executing in this frame.
     /// Empty for the top-level chunk (which is not a closure call).
     /// Used by `Op::StoreSelf` to reconstruct the closure value.
@@ -259,7 +259,7 @@ pub struct VM<'h> {
     stack: Vec<VmValue>,
     /// The call-frame stack.  The innermost (most-recently-pushed) frame is
     /// `frames.last_mut()`.
-    frames: Vec<CallFrame>,
+    pub(crate) frames: Vec<CallFrame>,
     /// GC heap shared with the tree-walking evaluator.
     heap: &'h mut Heap,
 }
@@ -290,6 +290,16 @@ impl<'h> VM<'h> {
     ///
     /// Returns the final value or a runtime error string.
     pub fn run(&mut self) -> Result<VmValue, String> {
+        #[cfg(target_arch = "x86_64")]
+        if self.frames.len() == 1 {
+            let chunk = Rc::clone(&self.frames[0].chunk);
+            let frame_key = format!("{}", chunk.id);
+            let fp = crate::vm::JIT_CACHE.with(|c| c.borrow_mut().tick(&frame_key, &chunk));
+            if let Some(fp) = fp {
+                return self.run_jit(fp);
+            }
+        }
+
         loop {
             // Safety: frames is never empty while running.
             let frame_idx = self.frames.len() - 1;
@@ -606,5 +616,12 @@ impl<'h> VM<'h> {
 
             other => Err(format!("VM: not callable: {:?}", other)),
         }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn run_jit(&mut self, fp: unsafe extern "C" fn(*mut crate::vm::jit_abi::JitFrame)) -> Result<VmValue, String> {
+        let mut frame = crate::vm::jit_abi::JitFrame::new(self);
+        unsafe { fp(&mut frame) };
+        frame.into_vm_value()
     }
 }

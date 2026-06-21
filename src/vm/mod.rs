@@ -15,6 +15,13 @@ pub mod cache;
 pub mod compiler;
 pub mod machine;
 
+#[cfg(target_arch = "x86_64")]
+pub mod jit_abi;
+#[cfg(target_arch = "x86_64")]
+pub mod jit_compiler;
+#[cfg(target_arch = "x86_64")]
+pub mod jit_cache;
+
 use std::cell::RefCell;
 
 use crate::eval::eval_tree as tree_eval;
@@ -35,6 +42,11 @@ use machine::{VM, vm_value_to_expr};
 ///   compilation cost for any given expression is paid at most once.
 thread_local! {
     static CACHE: RefCell<CompileCache> = RefCell::new(CompileCache::new());
+}
+
+#[cfg(target_arch = "x86_64")]
+thread_local! {
+    pub(crate) static JIT_CACHE: RefCell<jit_cache::JitCache> = RefCell::new(jit_cache::JitCache::new());
 }
 
 // ── vm_eval ───────────────────────────────────────────────────────────────────

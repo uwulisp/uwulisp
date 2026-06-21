@@ -33,6 +33,9 @@
 use std::rc::Rc;
 use crate::gc::{Heap, GcHandle};
 use crate::expr::Expr;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static CHUNK_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 // ── Value ─────────────────────────────────────────────────────────────────────
 
@@ -252,6 +255,8 @@ pub struct Chunk {
     /// Lambda bodies compiled from `lambda` forms inside this chunk.
     /// `Op::MakeFunc { code_offset, .. }` indexes into this vector.
     pub sub_chunks: Vec<Chunk>,
+    /// Globally unique ID for this chunk.
+    pub id: u64,
 }
 
 impl Chunk {
@@ -260,6 +265,7 @@ impl Chunk {
         Chunk {
             ops: Vec::new(),
             sub_chunks: Vec::new(),
+            id: CHUNK_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
         }
     }
 

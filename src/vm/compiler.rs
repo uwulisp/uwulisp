@@ -274,6 +274,14 @@ fn compile_list(
             // ── lambda ────────────────────────────────────────────────────────
             "lambda" => return compile_lambda(list, chunk, heap, env, None),
 
+            // ── tailcall ──────────────────────────────────────────────────────
+            "tailcall" => {
+                if list.len() < 2 {
+                    return Err("tailcall expects at least a function".into());
+                }
+                return compile_call(&list[1..], chunk, heap, env, true);
+            }
+
             // Anything else falls through to function-call handling below.
             _ => {}
         }
