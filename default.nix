@@ -4,7 +4,7 @@
 
 pkgs.rustPlatform.buildRustPackage rec {
   pname = "uwulisp";
-  version = "0.1.0";
+  version = "1.3.0";
 
   # The source directory of the project
   src = ./.;
