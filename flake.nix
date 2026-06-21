@@ -12,8 +12,13 @@
         pkgs = import nixpkgs { inherit system; };
       in
       {
-        # Default package built using the default.nix configuration
+        # Default package built using the default.nix configuration (VM and JIT enabled)
         packages.default = pkgs.callPackage ./default.nix {};
+
+        # A custom build variant with only the VM feature, omitting JIT
+        packages.no-jit = pkgs.callPackage ./default.nix {
+          features = [ "vm" ];
+        };
 
         # Development environment (can be entered with `nix develop`)
         devShells.default = pkgs.mkShell {

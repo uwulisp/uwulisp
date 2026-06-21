@@ -1,4 +1,6 @@
-{ pkgs ? import <nixpkgs> {} }:
+{ pkgs ? import <nixpkgs> {}
+, features ? [ "vm" "jit" ]
+}:
 
 pkgs.rustPlatform.buildRustPackage rec {
   pname = "uwulisp";
@@ -11,6 +13,9 @@ pkgs.rustPlatform.buildRustPackage rec {
   cargoLock = {
     lockFile = ./Cargo.lock;
   };
+
+  buildNoDefaultFeatures = true;
+  buildFeatures = features;
 
   # Native dependencies (needed only at build time, e.g. pkg-config, cmake)
   nativeBuildInputs = [ ];
