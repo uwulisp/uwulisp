@@ -9,8 +9,8 @@ Make sure you have [Rust and Cargo installed](https://www.rust-lang.org/tools/in
 ```bash
 cargo run --release
 #if you use nix
-nix run github:username/uwulisp
-nix shell github:username/uwulisp
+nix run github:uwulisp/uwulisp
+nix shell github:uwulisp/uwulisp
 ```
 
 ## document
