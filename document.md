@@ -205,6 +205,44 @@ Creates a new child environment, evaluates each binding's `expr` in the *outer* 
 
 ---
 
+### `for` — special form
+
+**Rule:** `(for var arg body*)`
+
+Iterates over a numeric range or a list, binding `var` on each iteration and evaluating `body*` for side effects. Always returns `()`.
+
+**Dispatch** depends on the number of arguments and the runtime types of the middle arguments:
+
+| Shape | Semantics |
+|-------|-----------|
+| `(for var coll body*)` — **4 elements total** | List iteration: evaluate `coll`, bind `var` to each element in order, run `body*` |
+| `(for var start end body*)` — **5+ elements**, and both `start` and `end` evaluate to numbers | Numeric range: `var` runs from `start` up to but **not including** `end`, stepping by `1.0` |
+| `(for var arg body*)` — **5+ elements**, but `start`/`end` are not both numbers | List iteration: `arg` is the collection, `body*` starts at the fourth argument |
+
+The loop variable and any internal state live in a child environment that is discarded when the loop finishes — `var` is not visible outside the form.
+
+```lisp
+; numeric: prints 0 1 2 3 4, then ⇒ ()
+(for i 0 5 (print i))
+
+; list: prints 1 2 3, then ⇒ ()
+(for x '(1 2 3) (print x))
+
+; multi-statement body
+(for n 1 4
+  (print n)
+  (print (* n n)))   ; ⇒ ()
+
+; dynamic bounds (evaluated at runtime)
+(define start 0)
+(define end 3)
+(for j start end (print j))   ; prints 0 1 2
+```
+
+> **VM note:** when compiled with the `--features vm` bytecode backend, literal numeric bounds such as `(for i 0 5 …)` and four-element list forms are compiled to jump loops. Non-literal five-or-more-argument forms (e.g. `(for j start end …)`) fall back to the tree-walker so runtime dispatch can choose numeric vs list semantics.
+
+---
+
 ### `tailcall` — special form
 
 **Rule:** `(tailcall f arg*)`

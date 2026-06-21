@@ -131,7 +131,7 @@ fn expand_all(
                     // reach here in normal flow (is_compilable blocks it), but
                     // guard defensively so expand_all never mangles it.
                     "defmacro" => return Ok(expr.clone()),
-                    "if" | "begin" | "define" | "set!" | "let" | "let*" => {
+                    "if" | "begin" | "define" | "set!" | "let" | "let*" | "for" => {
                         // Expand sub-expressions, keeping the special-form head.
                         let mut expanded = vec![list[0].clone()];
                         for sub in &list[1..] {
@@ -270,6 +270,9 @@ fn compile_list(
 
             // ── let* ──────────────────────────────────────────────────────────
             "let*" => return compile_let_star(list, chunk, heap, env, tail),
+
+            // ── for ───────────────────────────────────────────────────────────
+            "for" => return compile_for(list, chunk, heap, env, tail),
 
             // ── lambda ────────────────────────────────────────────────────────
             "lambda" => return compile_lambda(list, chunk, heap, env, None),
@@ -586,6 +589,179 @@ fn compile_begin(
         chunk.emit(Op::Pop);
     }
     compile_expr(body.last().unwrap(), chunk, heap, env, tail)
+}
+
+// ── for ───────────────────────────────────────────────────────────────────────
+
+const FOR_END: &str = "__for-end";
+const FOR_LST: &str = "__for-lst";
+
+/// Compile `(for var arg body...)`.
+///
+/// Literal numeric bounds `(for var N M body...)` compile to a jump loop.
+/// Single-collection forms `(for var coll body...)` compile to a cdr walk.
+/// Non-literal 5+ arg forms fall back to `TreeEval` so runtime dispatch in
+/// `eval_for` can choose numeric vs list semantics.
+fn compile_for(
+    list: &[Expr],
+    chunk: &mut Chunk,
+    heap: &mut Heap,
+    env: crate::expr::Env,
+    tail: bool,
+) -> Result<(), String> {
+    if list.len() < 4 {
+        return Err(format!(
+            "for expects at least 3 arguments (var collection body), got {}",
+            list.len() - 1
+        ));
+    }
+
+    let var = match &list[1] {
+        Expr::Symbol(name) => name.clone(),
+        other => {
+            return Err(format!(
+                "for: loop variable must be a symbol, got {:?}",
+                other
+            ));
+        }
+    };
+
+    let numeric_literals = list.len() >= 5
+        && matches!(&list[2], Expr::Number(_))
+        && matches!(&list[3], Expr::Number(_));
+
+    if list.len() >= 5 && !numeric_literals {
+        chunk.emit(Op::TreeEval(Expr::List(list.to_vec())));
+        let _ = tail;
+        return Ok(());
+    }
+
+    if numeric_literals {
+        compile_for_numeric(&list[2], &list[3], &var, &list[4..], chunk, heap, env)
+    } else {
+        compile_for_list(&list[2], &var, &list[3..], chunk, heap, env)
+    }
+}
+
+fn compile_for_body(
+    body: &[Expr],
+    chunk: &mut Chunk,
+    heap: &mut Heap,
+    env: crate::expr::Env,
+) -> Result<(), String> {
+    for expr in body {
+        compile_expr(expr, chunk, heap, env, false)?;
+        chunk.emit(Op::Pop);
+    }
+    Ok(())
+}
+
+fn compile_for_numeric(
+    start: &Expr,
+    end: &Expr,
+    var: &str,
+    body: &[Expr],
+    chunk: &mut Chunk,
+    heap: &mut Heap,
+    env: crate::expr::Env,
+) -> Result<(), String> {
+    chunk.emit(Op::PushEnv);
+    compile_expr(start, chunk, heap, env, false)?;
+    chunk.emit(Op::StoreVar(var.to_string()));
+    compile_expr(end, chunk, heap, env, false)?;
+    chunk.emit(Op::StoreVar(FOR_END.into()));
+
+    let loop_start = chunk.ops.len();
+    compile_call(
+        &[
+            Expr::Symbol("<".into()),
+            Expr::Symbol(var.into()),
+            Expr::Symbol(FOR_END.into()),
+        ],
+        chunk,
+        heap,
+        env,
+        false,
+    )?;
+    let jump_end_idx = chunk.emit(Op::JumpIfFalse(0));
+
+    compile_for_body(body, chunk, heap, env)?;
+
+    compile_call(
+        &[
+            Expr::Symbol("+".into()),
+            Expr::Symbol(var.into()),
+            Expr::Number(1.0),
+        ],
+        chunk,
+        heap,
+        env,
+        false,
+    )?;
+    chunk.emit(Op::StoreVar(var.to_string()));
+    chunk.emit(Op::Jump(loop_start));
+
+    let end_label = chunk.ops.len();
+    chunk.patch_jump(jump_end_idx, end_label);
+    chunk.emit(Op::PopEnv);
+    chunk.emit(Op::LoadConst(Value::Nil));
+    Ok(())
+}
+
+fn compile_for_list(
+    collection: &Expr,
+    var: &str,
+    body: &[Expr],
+    chunk: &mut Chunk,
+    heap: &mut Heap,
+    env: crate::expr::Env,
+) -> Result<(), String> {
+    chunk.emit(Op::PushEnv);
+    compile_expr(collection, chunk, heap, env, false)?;
+    chunk.emit(Op::StoreVar(FOR_LST.into()));
+
+    let loop_start = chunk.ops.len();
+    compile_call(
+        &[
+            Expr::Symbol("not".into()),
+            Expr::List(vec![
+                Expr::Symbol("null?".into()),
+                Expr::Symbol(FOR_LST.into()),
+            ]),
+        ],
+        chunk,
+        heap,
+        env,
+        false,
+    )?;
+    let jump_end_idx = chunk.emit(Op::JumpIfFalse(0));
+
+    compile_call(
+        &[Expr::Symbol("car".into()), Expr::Symbol(FOR_LST.into())],
+        chunk,
+        heap,
+        env,
+        false,
+    )?;
+    chunk.emit(Op::StoreVar(var.to_string()));
+
+    compile_for_body(body, chunk, heap, env)?;
+
+    compile_call(
+        &[Expr::Symbol("cdr".into()), Expr::Symbol(FOR_LST.into())],
+        chunk,
+        heap,
+        env,
+        false,
+    )?;
+    chunk.emit(Op::StoreVar(FOR_LST.into()));
+    chunk.emit(Op::Jump(loop_start));
+
+    let end_label = chunk.ops.len();
+    chunk.patch_jump(jump_end_idx, end_label);
+    chunk.emit(Op::PopEnv);
+    chunk.emit(Op::LoadConst(Value::Nil));
+    Ok(())
 }
 
 // ── let ───────────────────────────────────────────────────────────────────────
@@ -970,7 +1146,7 @@ fn is_compilable_rec(expr: &Expr, qq_depth: usize, heap: &Heap, env: GcHandle) -
                         "lambda" => {
                             return items.iter().all(|e| is_compilable_rec(e, 0, heap, env));
                         }
-                        "define" | "let" => {
+                        "define" | "let" | "for" => {
                             return items.iter().all(|e| is_compilable_rec(e, 0, heap, env));
                         }
                         "quasiquote" => {

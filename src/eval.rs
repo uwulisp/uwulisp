@@ -190,6 +190,7 @@ fn eval_step(expr: &Expr, env: Env, heap: &mut Heap) -> Result<Step, String> {
                     "begin" => return eval_begin(list, env, heap),
                     "let" => return eval_let(list, env, heap),
                     "let*" => return eval_let_star(list, env, heap),
+                    "for" => return eval_for(list, env, heap),
 
                     // ── explicit tail-call form ────────────────────────────
                     //
@@ -517,6 +518,80 @@ fn eval_let_star(list: &[Expr], env: Env, heap: &mut Heap) -> Result<Step, Strin
         expr: body[body.len() - 1].clone(),
         env: child_env,
     })
+}
+
+/// `(for var arg body...)`
+///
+/// Dual semantics:
+/// - `(for var coll body...)` when fewer than 5 elements, or when the third
+///   and fourth arguments do not both evaluate to numbers.
+/// - `(for var start end body...)` when there are 5+ elements and both
+///   `start` and `end` evaluate to numbers.  `var` runs from `start` up to
+///   but not including `end`, stepping by 1.0.
+///
+/// Always returns `()`.
+fn eval_for(list: &[Expr], env: Env, heap: &mut Heap) -> Result<Step, String> {
+    if list.len() < 4 {
+        return Err(format!(
+            "for expects at least 3 arguments (var collection body), got {}",
+            list.len() - 1
+        ));
+    }
+
+    let var_name = match &list[1] {
+        Expr::Symbol(name) => name.clone(),
+        other => {
+            return Err(format!(
+                "for: loop variable must be a symbol, got {:?}",
+                other
+            ));
+        }
+    };
+
+    let loop_env = new_env(heap, Some(env));
+
+    let numeric = if list.len() >= 5 {
+        let start = eval(&list[2], env, heap)?;
+        let end = eval(&list[3], env, heap)?;
+        if let (Expr::Number(start_n), Expr::Number(end_n)) = (start, end) {
+            let body = &list[4..];
+            let mut i = start_n;
+            while i < end_n {
+                env_set(heap, loop_env, var_name.clone(), Expr::Number(i));
+                for e in body {
+                    eval(e, loop_env, heap)?;
+                }
+                i += 1.0;
+            }
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    if !numeric {
+        let coll = eval(&list[2], env, heap)?;
+        let body = &list[3..];
+        let items = match coll {
+            Expr::List(items) => items,
+            other => {
+                return Err(format!(
+                    "for: collection must be a list, got {:?}",
+                    other
+                ));
+            }
+        };
+        for item in items {
+            env_set(heap, loop_env, var_name.clone(), item);
+            for e in body {
+                eval(e, loop_env, heap)?;
+            }
+        }
+    }
+
+    Ok(Step::Value(Expr::List(vec![])))
 }
 
 // ── function application ──────────────────────────────────────────────────────
