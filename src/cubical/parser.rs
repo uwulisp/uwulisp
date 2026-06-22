@@ -31,6 +31,7 @@ impl std::error::Error for ParseError {}
 pub enum Decl {
     Def { name: Name, ty: Term, val: Term },
     Data(Datatype),
+    Import { path: String },
 }
 
 pub fn parse_term(src: &str) -> Result<Term, ParseError> {
@@ -42,9 +43,59 @@ pub fn parse_term(src: &str) -> Result<Term, ParseError> {
 }
 
 pub fn parse_program(src: &str) -> Result<Vec<Decl>, ParseError> {
-    let tokens = Lexer::new(src).lex()?;
-    let mut parser = Parser::new(tokens);
-    parser.parse_program()
+    let mut parser = ProgramParser::new(src)?;
+    let mut decls = Vec::new();
+    while let Some(decl) = parser.next_decl()? {
+        decls.push(decl);
+    }
+    Ok(decls)
+}
+
+/// Incremental top-level parser for multi-file programs.
+///
+/// After processing `import` declarations at runtime, call [`sync_from_env`]
+/// so later declarations can resolve names from the merged environment.
+pub struct ProgramParser {
+    parser: Parser,
+}
+
+impl ProgramParser {
+    pub fn new(src: &str) -> Result<Self, ParseError> {
+        let tokens = Lexer::new(src).lex()?;
+        Ok(Self {
+            parser: Parser::new(tokens),
+        })
+    }
+
+    pub fn sync_from_env(&mut self, env: &crate::cubical::env::Env) {
+        self.parser.global_env = env
+            .defs
+            .iter()
+            .map(|(name, _, _)| name.clone())
+            .collect();
+        self.parser.datatypes = env.datatypes.clone();
+    }
+
+    pub fn next_decl(&mut self) -> Result<Option<Decl>, ParseError> {
+        if self.parser.at(&TokenKind::Eof) {
+            return Ok(None);
+        }
+        let decl = if self.parser.consume_ident("def") {
+            self.parser.parse_def()?
+        } else if self.parser.consume_ident("data") {
+            self.parser.parse_data_decl()?
+        } else if self.parser.consume_ident("import") {
+            self.parser.parse_import()?
+        } else {
+            return Err(self.parser.error_here("expected top-level declaration"));
+        };
+        match &decl {
+            Decl::Def { name, .. } => self.parser.global_env.insert(0, name.clone()),
+            Decl::Data(dt) => self.parser.datatypes.push(dt.clone()),
+            Decl::Import { .. } => {}
+        }
+        Ok(Some(decl))
+    }
 }
 
 /// Parse and typecheck a complete program.
@@ -69,6 +120,9 @@ pub fn typecheck_program(
 
     for decl in decls {
         match decl {
+            Decl::Import { .. } => {
+                return Err("import requires a file path; use cubical::run instead".to_string());
+            }
             Decl::Data(dt) => {
                 // Make the datatype available to all subsequent declarations.
                 dts.push(dt);
@@ -116,6 +170,7 @@ enum TokenKind {
     LBracket,
     RBracket,
     Equals,
+    String(String),
     Eof,
 }
 
@@ -267,6 +322,7 @@ impl<'a> Lexer<'a> {
                     self.bump();
                     tokens.push(tok(TokenKind::Backslash, line, col));
                 }
+                '"' => tokens.push(self.lex_string(line, col)?),
                 c if c.is_ascii_digit() => tokens.push(self.lex_int(line, col)?),
                 c if is_ident_start(c) => tokens.push(self.lex_ident(line, col)),
                 other => return Err(err(format!("unexpected character '{}'", other), line, col)),
@@ -303,6 +359,50 @@ impl<'a> Lexer<'a> {
             }
         }
         tok(TokenKind::Ident(text), line, col)
+    }
+
+    fn lex_string(&mut self, line: usize, col: usize) -> Result<Token, ParseError> {
+        self.bump(); // opening "
+        let mut text = String::new();
+        while let Some(c) = self.peek() {
+            match c {
+                '"' => {
+                    self.bump();
+                    return Ok(tok(TokenKind::String(text), line, col));
+                }
+                '\\' => {
+                    self.bump();
+                    match self.peek() {
+                        Some('"') => {
+                            self.bump();
+                            text.push('"');
+                        }
+                        Some('\\') => {
+                            self.bump();
+                            text.push('\\');
+                        }
+                        Some(other) => {
+                            return Err(err(
+                                format!("invalid escape sequence '\\{}'", other),
+                                self.line,
+                                self.col,
+                            ));
+                        }
+                        None => {
+                            return Err(err("unterminated string literal", line, col));
+                        }
+                    }
+                }
+                '\n' => {
+                    return Err(err("unterminated string literal", line, col));
+                }
+                other => {
+                    text.push(other);
+                    self.bump();
+                }
+            }
+        }
+        Err(err("unterminated string literal", line, col))
     }
 
     fn peek(&mut self) -> Option<char> {
@@ -385,16 +485,24 @@ impl Parser {
                 self.parse_def()?
             } else if self.consume_ident("data") {
                 self.parse_data_decl()?
+            } else if self.consume_ident("import") {
+                self.parse_import()?
             } else {
                 return Err(self.error_here("expected top-level declaration"));
             };
             match &decl {
                 Decl::Def { name, .. } => self.global_env.insert(0, name.clone()),
                 Decl::Data(dt) => self.datatypes.push(dt.clone()),
+                Decl::Import { .. } => {}
             }
             decls.push(decl);
         }
         Ok(decls)
+    }
+
+    fn parse_import(&mut self) -> Result<Decl, ParseError> {
+        let path = self.expect_string("expected string literal after 'import'")?;
+        Ok(Decl::Import { path })
     }
 
     fn parse_def(&mut self) -> Result<Decl, ParseError> {
@@ -1023,7 +1131,7 @@ impl Parser {
     fn is_decl_start(&self) -> bool {
         matches!(
             &self.peek().kind,
-            TokenKind::Ident(name) if name == "def" || name == "data"
+            TokenKind::Ident(name) if name == "def" || name == "data" || name == "import"
         )
     }
 
@@ -1056,6 +1164,16 @@ impl Parser {
             TokenKind::Ident(name) => {
                 self.pos += 1;
                 Ok(name)
+            }
+            _ => Err(self.error_here(message)),
+        }
+    }
+
+    fn expect_string(&mut self, message: impl Into<String>) -> Result<String, ParseError> {
+        match self.peek().kind.clone() {
+            TokenKind::String(path) => {
+                self.pos += 1;
+                Ok(path)
             }
             _ => Err(self.error_here(message)),
         }
@@ -1158,6 +1276,7 @@ fn describe(kind: &TokenKind) -> String {
         TokenKind::LBracket => "'['".to_string(),
         TokenKind::RBracket => "']'".to_string(),
         TokenKind::Equals => "'='".to_string(),
+        TokenKind::String(s) => format!("\"{}\"", s),
         TokenKind::Eof => "end of input".to_string(),
     }
 }
@@ -1208,6 +1327,34 @@ mod tests {
             term,
             Term::PApp(Box::new(Term::TVar(0)), Box::new(Term::TInterval(I::I0)))
         );
+    }
+
+    #[test]
+    fn parses_import_declaration() {
+        let decls = parse_program("import \"foo.uwuc\"").unwrap();
+        assert_eq!(decls.len(), 1);
+        match &decls[0] {
+            Decl::Import { path } => assert_eq!(path, "foo.uwuc"),
+            _ => panic!("expected import declaration"),
+        }
+    }
+
+    #[test]
+    fn parses_string_literal_with_escapes() {
+        let tokens = Lexer::new("\"foo\\\"bar\\\\baz\"").lex().unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::String("foo\"bar\\baz".to_string()));
+    }
+
+    #[test]
+    fn import_without_string_is_parse_error() {
+        let err = parse_program("import foo").unwrap_err();
+        assert!(err.message.contains("string literal"));
+    }
+
+    #[test]
+    fn typecheck_program_rejects_import() {
+        let err = typecheck_program("import \"foo.uwuc\"").unwrap_err();
+        assert!(err.contains("import requires a file path"));
     }
 
     #[test]
