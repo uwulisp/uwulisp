@@ -82,12 +82,11 @@ pub fn apply_globals(genv: &GlobalEnv, t: &Term) -> Term {
     // Remove globals from the outside in: the oldest definition has the
     // highest de Bruijn index, so substituting it first cannot disturb the
     // indices of newer globals that still need to be substituted.
-    genv.iter()
-        .enumerate()
-        .rev()
-        .fold(t.clone(), |body, (k, (_, _, v))| {
-            subst_global(k as i32, v, &body)
-        })
+    let n = genv.len();
+    (0..n).rev().fold(t.clone(), |body, k| {
+        let (_, _, v) = &genv[k];
+        subst_global(k as i32, v, &body)
+    })
 }
 
 /// Substitute the global at de Bruijn index `k` with its value `v`,

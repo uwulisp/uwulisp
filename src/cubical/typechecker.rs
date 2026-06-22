@@ -200,6 +200,53 @@ pub fn require_universe(ctx: &Ctx, t: &Term) -> Result<Level, TypeError> {
     }
 }
 
+fn type_level_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Level, TypeError> {
+    match nbe_eval(t) {
+        Term::TUniv(n) => Ok(n),
+        Term::TData(_) => Ok(0),
+        Term::TIntervalTy => Ok(0),
+        Term::TPi(x, a, b) => {
+            let i = type_level_dt(dts, ctx, &a)?;
+            let ctx2 = extend_ctx(x.clone(), nbe_eval(&a), ctx);
+            let j = type_level_dt(dts, &ctx2, &b)?;
+            Ok(i.max(j))
+        }
+        Term::TPath(a, u, v) => {
+            let n = type_level_dt(dts, ctx, &a)?;
+            let a_ = nbe_eval(&a);
+            let u_ty = match &a_ {
+                Term::PLam(_, body) => nbe_eval(&beta(body, &Term::TInterval(I::I0))),
+                p => p.clone(),
+            };
+            let v_ty = match &a_ {
+                Term::PLam(_, body) => nbe_eval(&beta(body, &Term::TInterval(I::I1))),
+                p => p.clone(),
+            };
+            check_dt(dts, ctx, &u, &u_ty)?;
+            check_dt(dts, ctx, &v, &v_ty)?;
+            Ok(n)
+        }
+        Term::TEquiv(a, b) => {
+            let n = type_level_dt(dts, ctx, &a)?;
+            let m = type_level_dt(dts, ctx, &b)?;
+            Ok(n.max(m))
+        }
+        Term::TSigma(x, a, b) => {
+            let i = type_level_dt(dts, ctx, &a)?;
+            let ctx2 = extend_ctx(x.clone(), nbe_eval(&a), ctx);
+            let j = type_level_dt(dts, &ctx2, &b)?;
+            Ok(i.max(j))
+        }
+        _ => {
+            let ty = infer_dt(dts, ctx, t)?;
+            match nbe_eval(&ty) {
+                Term::TUniv(n) => Ok(n),
+                other => Err(TypeError::ExpectedUniverse(other)),
+            }
+        }
+    }
+}
+
 pub fn check_interval(ctx: &Ctx, t: &Term) -> Result<(), TypeError> {
     match t {
         Term::TInterval(_) | Term::TCube(_) => return Ok(()),
@@ -449,15 +496,15 @@ pub fn infer_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Term, TypeError
 
         // Pi formation: Π(x:A).B : U(max i j)
         Term::TPi(x, a_ty, b_ty) => {
-            let i = require_universe(ctx, a_ty)?;
+            let i = type_level_dt(dts, ctx, a_ty)?;
             let ctx2 = extend_ctx(x.clone(), nbe_eval(a_ty), ctx);
-            let j = require_universe(&ctx2, b_ty)?;
+            let j = type_level_dt(dts, &ctx2, b_ty)?;
             Ok(Term::TUniv(i.max(j)))
         }
 
         // Path type: Path A u v : U n
         Term::TPath(a_ty, u, v) => {
-            let n = require_universe(ctx, a_ty)?;
+            let n = type_level_dt(dts, ctx, a_ty)?;
             let a_ty_ = nbe_eval(a_ty);
             let u_ty = match &a_ty_ {
                 Term::PLam(_, body) => nbe_eval(&beta(body, &Term::TInterval(I::I0))),
@@ -497,15 +544,15 @@ pub fn infer_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Term, TypeError
 
         // Equiv type
         Term::TEquiv(a, b) => {
-            let n = require_universe(ctx, a)?;
-            let m = require_universe(ctx, b)?;
+            let n = type_level_dt(dts, ctx, a)?;
+            let m = type_level_dt(dts, ctx, b)?;
             Ok(Term::TUniv(n.max(m)))
         }
 
         // mkEquiv: build an equivalence record
         Term::TMkEquiv(a, b, f, g, eta, eps) => {
-            require_universe(ctx, a)?;
-            require_universe(ctx, b)?;
+            type_level_dt(dts, ctx, a)?;
+            type_level_dt(dts, ctx, b)?;
             let a_ = nbe_eval(a);
             let b_ = nbe_eval(b);
             // f : A → B
@@ -573,7 +620,7 @@ pub fn infer_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Term, TypeError
         // ua e : Path U A B   where  e : Equiv A B
         Term::TUa(e) => {
             let (a, b) = require_equiv(ctx, e)?;
-            let n = require_universe(ctx, &a)?;
+            let n = type_level_dt(dts, ctx, &a)?;
             Ok(Term::TPath(
                 Box::new(Term::TUniv(n)),
                 Box::new(a),
@@ -616,7 +663,7 @@ pub fn infer_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Term, TypeError
 
         // Glue type formation
         Term::TGlue(a_ty, phi, te) => {
-            let n = require_universe(ctx, a_ty)?;
+            let n = type_level_dt(dts, ctx, a_ty)?;
             let a_ty_ = nbe_eval(a_ty);
             check_interval(ctx, phi)?;
             let te_ty = infer(ctx, te)?;
@@ -626,16 +673,16 @@ pub fn infer_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Term, TypeError
                     let a_ = nbe_eval(&a);
                     let b_ = nbe_eval(&b);
                     require_equal(ctx, &b_, &a_ty_)?;
-                    let p = require_universe(ctx, &a_)?;
-                    let q = require_universe(ctx, &b_)?;
+                    let p = type_level_dt(dts, ctx, &a_)?;
+                    let q = type_level_dt(dts, ctx, &b_)?;
                     p.max(q)
                 }
                 Term::TMkEquiv(a, b, _, _, _, _) => {
                     let a_ = nbe_eval(&a);
                     let b_ = nbe_eval(&b);
                     require_equal(ctx, &b_, &a_ty_)?;
-                    let p = require_universe(ctx, &a_)?;
-                    let q = require_universe(ctx, &b_)?;
+                    let p = type_level_dt(dts, ctx, &a_)?;
+                    let q = type_level_dt(dts, ctx, &b_)?;
                     p.max(q)
                 }
                 other => {
@@ -682,9 +729,9 @@ pub fn infer_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Term, TypeError
 
         // Sigma formation: Σ(x:A).B : U(max i j)
         Term::TSigma(x, a_ty, b_ty) => {
-            let i = require_universe(ctx, a_ty)?;
+            let i = type_level_dt(dts, ctx, a_ty)?;
             let ctx2 = extend_ctx(x.clone(), nbe_eval(a_ty), ctx);
-            let j = require_universe(&ctx2, b_ty)?;
+            let j = type_level_dt(dts, &ctx2, b_ty)?;
             Ok(Term::TUniv(i.max(j)))
         }
 
@@ -711,7 +758,7 @@ pub fn infer_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Term, TypeError
 
         // hcomp A phi tube base
         Term::THComp(a_ty, phi, tube, base) => {
-            require_universe(ctx, a_ty)?;
+            type_level_dt(dts, ctx, a_ty)?;
             let a_ty_ = nbe_eval(a_ty);
             check_interval(ctx, phi)?;
             check(ctx, base, &a_ty_)?;
@@ -753,13 +800,56 @@ pub fn infer_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Term, TypeError
         // Inductive types / HITs
         // ------------------------------------------------------------------
 
-        // TData(d) : U_0  (all datatypes live in U_0; widen if needed later)
+        // TData(d) : U_k  where k is the maximum universe level required by
+        // any constructor argument type. We compute this by checking each
+        // arg type in a scope containing all prior args of that telescope.
+        // Datatypes with no constructors and no args default to U_0.
         Term::TData(d) => {
-            if dts.iter().any(|dt| &dt.name == d) {
-                Ok(Term::TUniv(0))
-            } else {
-                Err(TypeError::UnknownDatatype(d.clone()))
+            let dt = dts
+                .iter()
+                .find(|dt| &dt.name == d)
+                .ok_or_else(|| TypeError::UnknownDatatype(d.clone()))?;
+
+            let mut max_level: Level = 0;
+
+            // Ordinary constructors
+            for con_sig in &dt.cons {
+                let mut tel_ctx = ctx.clone();
+                let mut prev_args: Vec<Term> = Vec::new();
+                for (k, arg_ty) in con_sig.arg_tys.iter().enumerate() {
+                    let arg_ty_inst = prev_args
+                        .iter()
+                        .rev()
+                        .fold(arg_ty.clone(), |ty, a| beta(&ty, a));
+                    let lvl = type_level_dt(dts, &tel_ctx, &arg_ty_inst)?;
+                    max_level = max_level.max(lvl);
+                    // Push a fresh variable for this arg into the context.
+                    let var_name = format!("_con_arg_{}", k);
+                    let depth = k as i32;
+                    prev_args.push(shift(depth + 1, 0, &Term::TVar(0)));
+                    tel_ctx = extend_ctx(var_name, nbe_eval(&arg_ty_inst), &tel_ctx);
+                }
             }
+
+            // Path constructors (ordinary args only; interval arg is in 𝕀 ⊂ U_0)
+            for pcon_sig in &dt.pcons {
+                let mut tel_ctx = ctx.clone();
+                let mut prev_args: Vec<Term> = Vec::new();
+                for (k, arg_ty) in pcon_sig.arg_tys.iter().enumerate() {
+                    let arg_ty_inst = prev_args
+                        .iter()
+                        .rev()
+                        .fold(arg_ty.clone(), |ty, a| beta(&ty, a));
+                    let lvl = type_level_dt(dts, &tel_ctx, &arg_ty_inst)?;
+                    max_level = max_level.max(lvl);
+                    let var_name = format!("_pcon_arg_{}", k);
+                    let depth = k as i32;
+                    prev_args.push(shift(depth + 1, 0, &Term::TVar(0)));
+                    tel_ctx = extend_ctx(var_name, nbe_eval(&arg_ty_inst), &tel_ctx);
+                }
+            }
+
+            Ok(Term::TUniv(max_level))
         }
 
         // TCon(d, c, args) : TData(d)
@@ -836,8 +926,15 @@ pub fn infer_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Term, TypeError
                 .iter()
                 .rev()
                 .fold(sig.face1.clone(), |ty, a| beta(&ty, a));
+            // The path family must be a PLam over the interval variable so that
+            // the type is well-formed as Path (λ_. TData(d)) face0 face1.
+            // For non-parameterized HITs TData(d) is constant, but using PLam
+            // keeps the form correct and would generalise to parameterized types.
             Ok(Term::TPath(
-                Box::new(Term::TData(d.clone())),
+                Box::new(Term::PLam(
+                    "_".into(),
+                    Box::new(Term::TData(d.clone())),
+                )),
                 Box::new(nbe_eval(&face0)),
                 Box::new(nbe_eval(&face1)),
             ))
@@ -866,13 +963,24 @@ pub fn infer_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Term, TypeError
                 .find(|dt| dt.name == d)
                 .ok_or_else(|| TypeError::UnknownDatatype(d.clone()))?;
 
-            // Verify motive has type Π(_:TData(d)).U_n for some n.
-            let motive_inferred = infer_dt(dts, ctx, motive)?;
-            match nbe_eval(&motive_inferred) {
-                Term::TPi(_, dom, _) => {
-                    require_equal(ctx, &nbe_eval(&dom), &Term::TData(d.clone()))?;
+            // Verify motive has type Π(_:TData(d)).C where C is a well-formed type.
+            match motive.as_ref() {
+                Term::TAbs(x, body) => {
+                    let motive_ctx =
+                        extend_ctx(x.clone(), Term::TData(d.clone()), ctx);
+                    type_level_dt(dts, &motive_ctx, body)?;
                 }
-                other => return Err(TypeError::ExpectedPi(other)),
+                _ => {
+                    let motive_inferred = infer_dt(dts, ctx, motive)?;
+                    match nbe_eval(&motive_inferred) {
+                        Term::TPi(x, dom, cod) => {
+                            require_equal(ctx, &nbe_eval(&dom), &Term::TData(d.clone()))?;
+                            let cod_ctx = extend_ctx(x, nbe_eval(&dom), ctx);
+                            type_level_dt(dts, &cod_ctx, &cod)?;
+                        }
+                        other => return Err(TypeError::ExpectedPi(other)),
+                    }
+                }
             }
 
             // Check all ordinary constructor cases.
@@ -1133,13 +1241,72 @@ pub fn check_dt(dts: &[Datatype], ctx: &Ctx, t: &Term, ty: &Term) -> Result<(), 
             other => Err(TypeError::ExpectedSigma(other)),
         },
 
-        // Constructor introduction: delegate to infer_dt which has the full
-        // checking logic (including telescope arg checking against sig).
-        // Then unify the inferred type with the expected type.
-        t @ Term::TCon(_, _, _) | t @ Term::TPCon(_, _, _, _) => match infer_dt(dts, ctx, t) {
-            Ok(ty_) => require_equal(ctx, &nbe_eval(ty), &nbe_eval(&ty_)),
-            Err(e) => Err(e),
-        },
+        // Constructor introduction — checked bidirectionally.
+        //
+        // For TCon: the expected type must be TData(d). We use it to resolve
+        // the datatype so argument checking can propagate the expected type
+        // into dependent telescope positions, rather than inferring and
+        // comparing afterward.
+        //
+        // For TPCon: similarly, the expected type should be
+        // Path (λ_. TData(d)) face0 face1; we extract d from it and then
+        // delegate to infer_dt (which checks args and verifies the path
+        // endpoints). We still call require_equal at the end to catch any
+        // endpoint mismatch the caller's annotation encodes.
+        Term::TCon(d, c, args) => {
+            // Resolve expected datatype name from the annotation when possible,
+            // falling back to the constructor's own declared datatype.
+            let expected_ty_nf = nbe_eval(ty);
+            let expected_d = match &expected_ty_nf {
+                Term::TData(ed) => {
+                    // Consistency: the annotation's datatype must match the
+                    // constructor's declared datatype.
+                    if ed != d {
+                        return Err(TypeError::TypeMismatch(
+                            expected_ty_nf.clone(),
+                            Term::TData(d.clone()),
+                        ));
+                    }
+                    ed.clone()
+                }
+                // If the annotation isn't a TData, let infer catch it below.
+                _ => d.clone(),
+            };
+            let dt = dts
+                .iter()
+                .find(|dt| dt.name == expected_d)
+                .ok_or_else(|| TypeError::UnknownDatatype(expected_d.clone()))?;
+            let sig = dt
+                .find_con(c)
+                .ok_or_else(|| TypeError::UnknownConstructor(expected_d.clone(), c.clone()))?;
+            if args.len() != sig.arity() {
+                return Err(TypeError::WrongNumberOfArgs {
+                    con: c.clone(),
+                    expected: sig.arity(),
+                    got: args.len(),
+                });
+            }
+            // Check args against the telescope, propagating checked args into
+            // later dependent positions (bidirectional mode for each arg).
+            let mut checked_args: Vec<Term> = Vec::with_capacity(args.len());
+            for (k, arg) in args.iter().enumerate() {
+                let arg_ty = checked_args
+                    .iter()
+                    .rev()
+                    .fold(sig.arg_tys[k].clone(), |ty, prev| beta(&ty, prev));
+                check_dt(dts, ctx, arg, &nbe_eval(&arg_ty))?;
+                checked_args.push(nbe_eval(arg));
+            }
+            // Verify the overall expected type equals TData(d).
+            require_equal(ctx, &expected_ty_nf, &Term::TData(d.clone()))
+        }
+
+        Term::TPCon(d, pc, args, r) => {
+            // Infer the full path type from the constructor signature, then
+            // unify with the expected type so endpoint annotations are checked.
+            let inferred = infer_dt(dts, ctx, &Term::TPCon(d.clone(), pc.clone(), args.clone(), r.clone()))?;
+            require_equal(ctx, &nbe_eval(ty), &nbe_eval(&inferred))
+        }
 
         // Fall through to inference.
         t => match infer_dt(dts, ctx, t) {

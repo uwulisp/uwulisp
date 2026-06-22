@@ -14,7 +14,7 @@ use self::env::{Env, apply_globals, check_with_full_env, infer_with_full_env};
 use self::nbe::nbe_eval;
 use self::parser::{Decl, ParseError, parse_program};
 use self::syntax::{Name, Term};
-use self::typechecker::TypeError;
+use self::typechecker::{TypeError, check_closed_dt};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunOutput {
@@ -75,16 +75,24 @@ pub fn run(path: impl AsRef<Path>) -> Result<RunOutput, RunError> {
 
     for decl in decls {
         match decl {
-            Decl::Data(dt) => env.declare_datatype(dt),
+            Decl::Data(dt) => {
+                env.declare_datatype(dt.clone());
+                for con in &dt.cons {
+                    for arg_ty in &con.arg_tys {
+                        check_closed_dt(&env.datatypes, arg_ty, &Term::TUniv(0))
+                            .map_err(RunError::Type)?;
+                    }
+                }
+            }
             Decl::Def { name, ty, val } => {
-                match nbe_eval(&infer_with_full_env(&env, &ty)?) {
+                let closed_ty = nbe_eval(&apply_globals(&env.defs, &ty));
+                let closed_val = nbe_eval(&apply_globals(&env.defs, &val));
+
+                match nbe_eval(&infer_with_full_env(&env, &closed_ty)?) {
                     Term::TUniv(_) => {}
                     other => return Err(TypeError::ExpectedUniverse(other).into()),
                 }
-                check_with_full_env(&env, &val, &ty)?;
-
-                let closed_ty = nbe_eval(&apply_globals(&env.defs, &ty));
-                let closed_val = nbe_eval(&apply_globals(&env.defs, &val));
+                check_with_full_env(&env, &closed_val, &closed_ty)?;
                 let output = RunOutput {
                     name: name.clone(),
                     ty: closed_ty.clone(),

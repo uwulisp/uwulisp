@@ -1,4 +1,6 @@
-def main : U1 = U0
-data S1 =
-  | base : S1
-  | loop : S1 [ base , base ]
+data Nat = | zero : Nat | suc : Nat -> Nat
+
+def main : Nat -> Nat =
+  \n. match n return Nat with
+    | zero => zero
+    | suc m => m

@@ -47,6 +47,45 @@ pub fn parse_program(src: &str) -> Result<Vec<Decl>, ParseError> {
     parser.parse_program()
 }
 
+/// Parse and typecheck a complete program.
+///
+/// Declarations are processed in order. Each `data` declaration is added to
+/// the datatype environment before the next declaration is checked, so a `def`
+/// can refer to any datatype declared above it — exactly the behaviour the
+/// user expects.
+///
+/// Returns the list of successfully checked definitions (name, type, value)
+/// together with the collected datatypes, or a human-readable error string.
+pub fn typecheck_program(
+    src: &str,
+) -> Result<(Vec<crate::cubical::syntax::Datatype>, Vec<(String, crate::cubical::syntax::Term, crate::cubical::syntax::Term)>), String> {
+    use crate::cubical::typechecker::check_closed_dt;
+    use crate::cubical::syntax::Datatype;
+
+    let decls = parse_program(src).map_err(|e| e.to_string())?;
+
+    let mut dts: Vec<Datatype> = Vec::new();
+    let mut defs: Vec<(String, crate::cubical::syntax::Term, crate::cubical::syntax::Term)> = Vec::new();
+
+    for decl in decls {
+        match decl {
+            Decl::Data(dt) => {
+                // Make the datatype available to all subsequent declarations.
+                dts.push(dt);
+            }
+            Decl::Def { name, ty, val } => {
+                // Check the definition body against its declared type, with
+                // all datatypes declared so far in scope.
+                check_closed_dt(&dts, &val, &ty)
+                    .map_err(|e| format!("type error in '{}': {}", name, e))?;
+                defs.push((name, ty, val));
+            }
+        }
+    }
+
+    Ok((dts, defs))
+}
+
 // ---------------------------------------------------------------------------
 // Lexer
 // ---------------------------------------------------------------------------
