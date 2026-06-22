@@ -5,7 +5,10 @@ pub mod interval;
 pub mod nbe;
 pub mod parser;
 pub mod syntax;
+pub mod transpile;
 pub mod typechecker;
+
+pub use transpile::{transpile, transpile_source, write_output, EmittedModule, TranspileError, TranspileOutput};
 
 use std::collections::HashSet;
 use std::fmt;

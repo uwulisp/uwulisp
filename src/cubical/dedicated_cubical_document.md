@@ -427,3 +427,38 @@ prefix_or_atom ::= 'fst' prefix_or_atom
 
 atom     ::= ident | '0' | '1' | '(' term ')'
 ```
+
+---
+
+## Haskell transpilation
+
+The `transpile` module (`transpile.rs`) converts `.uwuc` files to type-erased Haskell via:
+
+```
+uwulisp --cubical-transpile <file.uwuc> [-o <output-dir>]
+```
+
+The transpiler also emits `Main.hs` with `main :: IO ()`, which calls the root file's last `def` (same entry point as `cubical::run`) using demo arguments (`Suc (Suc Zero)` for `Nat`, nullary constructors otherwise). Build and run:
+
+```
+cd <output-dir>
+ghc -o app Main.hs
+./app
+```
+
+### Supported (full emission)
+
+- `import`, `data`, `def`
+- Lambda, application, `let` (parsed as application of abstraction)
+- `match` / `elim` on ordinary constructors → Haskell `case`
+- Non-dependent `->`, `*`, pairs, `fst`/`snd`
+- Type erasure: dependent `Π`/`Σ` become plain `->` and tuples
+
+### Stubbed (via `Cubical.Prelude`)
+
+Cubical primitives emit calls into [`runtime/haskell/Cubical/Prelude.hs`](../../runtime/haskell/Cubical/Prelude.hs). These provide names and types for GHC but do not implement cubical computation:
+
+- Interval (`I`, `i0`, `i1`, `/\`, `\/`, `~`)
+- Paths (`Path`, `plam`, `papp`)
+- `hcomp`, `transport`, `ua`, `Equiv`, `Glue`, `glueElem`, `unglue`
+- Path constructors on HITs (data declarations include a comment; endpoints are not generated)

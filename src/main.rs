@@ -15,7 +15,7 @@ use gc::{GcHandle, Heap};
 use reader::parse_all;
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
 
 use crate::helper::shared_read_line;
@@ -116,6 +116,58 @@ fn main() {
                 match cubical::run(&args[i]) {
                     Ok(output) => println!("=> {:?}", output),
                     Err(err) => eprintln!("Cubical error: {}", err),
+                }
+            } else if args[i] == "--cubical-transpile" {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --cubical-transpile requires a filename argument");
+                    process::exit(1);
+                }
+                let input_path = Path::new(&args[i]);
+                let mut out_dir = input_path
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .to_path_buf();
+                i += 1;
+                if i < args.len() && args[i] == "-o" {
+                    i += 1;
+                    if i >= args.len() {
+                        eprintln!("Error: -o requires an output directory argument");
+                        process::exit(1);
+                    }
+                    out_dir = PathBuf::from(&args[i]);
+                }
+                match cubical::transpile(input_path) {
+                    Ok(output) => {
+                        if let Err(err) = cubical::write_output(&output, &out_dir) {
+                            eprintln!("Transpile write error: {}", err);
+                            process::exit(1);
+                        }
+                        for module in &output.modules {
+                            println!(
+                                "wrote {}",
+                                out_dir.join(
+                                    module
+                                        .path
+                                        .file_name()
+                                        .unwrap_or_default()
+                                )
+                                .display()
+                            );
+                        }
+                        if let Some(prelude) = &output.prelude {
+                            println!("wrote {}", out_dir.join(&prelude.path).display());
+                        }
+                        if output.modules.iter().any(|m| {
+                            m.path.file_stem().and_then(|s| s.to_str()) == Some("Main")
+                        }) {
+                            println!("run: cd {} && ghc -o app Main.hs && ./app", out_dir.display());
+                        }
+                    }
+                    Err(err) => {
+                        eprintln!("Transpile error: {}", err);
+                        process::exit(1);
+                    }
                 }
             } else {
                 let file_path = &args[i];
