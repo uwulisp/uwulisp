@@ -1,0 +1,1 @@
+data Nat = | zero : Nat | suc : Nat -> Nat

@@ -10,7 +10,29 @@ This document describes the concrete syntax of the cubical surface language pars
 
 ## Top-level Declarations
 
-A program is a sequence of declarations. Two forms are allowed.
+A program is a sequence of declarations. Three forms are allowed.
+
+### Import
+
+```
+import "<path>"
+```
+
+Reads another cubical source file and processes its top-level declarations in the current environment. Definitions and datatypes from the imported file are visible to subsequent declarations in the importing file.
+
+Relative paths are resolved against the directory of the file containing the `import`. Absolute paths are used as-is. Importing the same file more than once is a no-op. Circular imports are rejected with an error.
+
+Example:
+
+```
+-- nat.uwuc
+data Nat = | zero : Nat | suc : Nat -> Nat
+
+-- main.uwuc
+import "nat.uwuc"
+
+def main : Nat -> Nat = \n. n
+```
 
 ### Value definition
 
