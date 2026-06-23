@@ -12,3 +12,44 @@ def plus : Nat -> Nat -> Nat =
 
 def two : Nat = suc (suc zero)
 def four : Nat = plus two two
+
+def isZero : Nat -> Nat =
+  \n. match n return Nat with
+    | zero => suc zero
+    | suc m => zero
+
+data S1 =
+  | base : S1
+  | loop : S1 [ base , base ]
+
+-- A path is built with interval abstraction
+def loopPath : Path S1 base base = <i> loop @ i
+
+def flipLoop : S1 -> Path S1 base base =
+  \x. match x return Path S1 base base with
+    | base => <i> base
+    | loop i => <i> loop @ (~ i)
+
+def swap : (A : U0) * (B : U0) -> (B : U0) * (A : U0) =
+  \p. (snd p , fst p)
+
+def compose : (A : U0) -> (B : U0) -> (C : U0)
+            -> (B -> C) -> (A -> B) -> A -> C =
+  \A B C g f x. g (f x)
+
+def symPath : (A : U0) -> (x y : A) -> Path A x y -> Path A y x =
+  \A x y p. <i> p @ (~ i)
+
+def both : I -> I -> I =
+  \i j. (i /\ j) \/ (~ i)
+
+def cast : (A B : U0) -> Equiv A B -> A -> B =
+  \A B e a. equivFwd e a
+
+def transportExample : (A B : U0) -> Equiv A B -> A -> B =
+  \A B e a. transport (\<i> ua e @ i) a
+
+def glueExample : (A B : U0) -> Equiv A B -> Glue B i1 (\_. (A, e)) =
+  \A B e. glueElem i1 (\_. a) a
+
+
