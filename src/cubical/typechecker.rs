@@ -1295,7 +1295,10 @@ pub fn check_dt(dts: &[Datatype], ctx: &Ctx, t: &Term, ty: &Term) -> Result<(), 
             };
             let ctx2 = extend_ctx(i.clone(), interval_ty(), ctx);
             let body_ty = match nbe_eval(&a_ty) {
-                p @ Term::PLam { .. } => p,
+                // a_ty is a type family (PLam): apply it to the freshly-bound
+                // interval variable TVar(0) to get the body's type.
+                Term::PLam(_, b) => nbe_eval(&beta(&b, &Term::TVar(0))),
+                // a_ty is a constant type: shift it into the extended context.
                 plain => shift(1, 0, &plain),
             };
                         // Instantiate the interval binder at each endpoint by substituting
