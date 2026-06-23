@@ -658,22 +658,43 @@ pub fn infer_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Term, TypeError
                 // body instead, the same way `infer` already does for
                 // TAbs-applied-to-argument in TApp.
                 Term::PLam(i, body) => {
+                    // The body typically has the form PApp(path, IVar(0)),
+                    // i.e. `<i> path @ i` which is equivalent to `path`.
+                    // Infer the type of `path` directly to get the TPath,
+                    // whose endpoints are the argument and return types.
+                    let path = match body.as_ref() {
+                        Term::PApp(path, _) => path.as_ref().clone(),
+                        _ => body.as_ref().clone(),
+                    };
                     let ctx2 = extend_ctx(i.clone(), interval_ty(), ctx);
-                    let a_ty = infer_dt(dts, &ctx2, body)?;
-                    let u = nbe_eval(&beta(body, &Term::TInterval(I::I0)));
-                    let v = nbe_eval(&beta(body, &Term::TInterval(I::I1)));
-                    Term::TPath(Box::new(a_ty), Box::new(u), Box::new(v))
+                    let path_ty = nbe_eval(&infer_dt(dts, &ctx2, &path)?);
+                    // path_ty should be TPath(a_ty, u, v). The endpoints
+                    // need to be shifted back to the outer context
+                    // (removing the interval binder at index 0).
+                    match path_ty {
+                        Term::TPath(a_ty, u, v) => {
+                            let u = shift(-1, 0, &u);
+                            let v = shift(-1, 0, &v);
+                            Term::TPath(a_ty, Box::new(u), Box::new(v))
+                        }
+                        other => {
+                            let a_ty = infer_dt(dts, &ctx2, body)?;
+                            let u = shift(-1, 0, &apply_literal(&Literal::NegVar(0), body));
+                            let v = shift(-1, 0, &apply_literal(&Literal::Pos(0), body));
+                            Term::TPath(Box::new(a_ty), Box::new(u), Box::new(v))
+                        }
+                    }
                 }
                 _ => infer_dt(dts, ctx, p)?,
             };
             match nbe_eval(&p_ty) {
-                Term::TPath(a_ty, _, _) => {
+                Term::TPath(a_ty, u, v) => {
                     let (x_ty, ret_ty) = match nbe_eval(&a_ty) {
                         Term::PLam(_, body) => (
                             nbe_eval(&beta(&body, &Term::TInterval(I::I0))),
                             nbe_eval(&beta(&body, &Term::TInterval(I::I1))),
                         ),
-                        plain => (plain.clone(), plain),
+                        plain => (nbe_eval(&u), nbe_eval(&v)),
                     };
                     check_dt(dts, ctx, x, &x_ty)?;
                     Ok(ret_ty)
@@ -687,30 +708,71 @@ pub fn infer_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Term, TypeError
             let n = type_level_dt(dts, ctx, a_ty)?;
             let a_ty_ = nbe_eval(a_ty);
             check_interval_dt(dts, ctx, phi)?;
-            let te_ty = infer_dt(dts, ctx, te)?;
-            let m = match nbe_eval(&te_ty) {
-                Term::TUniv(k) => k,
-                Term::TEquiv(a, b) => {
-                    let a_ = nbe_eval(&a);
-                    let b_ = nbe_eval(&b);
-                    require_equal(ctx, &b_, &a_ty_)?;
-                    let p = type_level_dt(dts, ctx, &a_)?;
-                    let q = type_level_dt(dts, ctx, &b_)?;
-                    p.max(q)
+            let m = match te.as_ref() {
+                // te = (A, e) : Σ(X : U). Equiv X a_ty_
+                Term::TPair(te_a, _) => {
+                    let sigma = Term::TSigma(
+                        "X".to_string(),
+                        Box::new(Term::TUniv(n)),
+                        Box::new(Term::TEquiv(
+                            Box::new(Term::TVar(0)),
+                            Box::new(shift(1, 0, &a_ty_)),
+                        )),
+                    );
+                    check_dt(dts, ctx, te, &sigma)?;
+                    type_level_dt(dts, ctx, te_a)?
                 }
-                Term::TMkEquiv(a, b, _, _, _, _) => {
-                    let a_ = nbe_eval(&a);
-                    let b_ = nbe_eval(&b);
-                    require_equal(ctx, &b_, &a_ty_)?;
-                    let p = type_level_dt(dts, ctx, &a_)?;
-                    let q = type_level_dt(dts, ctx, &b_)?;
-                    p.max(q)
+                // te = λ_. (A, e) — strip the lambda and check the body
+                Term::TAbs(_, body) => {
+                    let body_stripped = beta(body, &Term::TInterval(I::I1));
+                    match &body_stripped {
+                        Term::TPair(te_a, _) => {
+                            let sigma = Term::TSigma(
+                                "X".to_string(),
+                                Box::new(Term::TUniv(n)),
+                                Box::new(Term::TEquiv(
+                                    Box::new(Term::TVar(0)),
+                                    Box::new(shift(1, 0, &a_ty_)),
+                                )),
+                            );
+                            check_dt(dts, ctx, &body_stripped, &sigma)?;
+                            type_level_dt(dts, ctx, te_a)?
+                        }
+                        other => {
+                            return Err(TypeError::Other(format!(
+                                "Glue: expected the lambda body to be a pair (type, equiv), got: {}",
+                                other
+                            )));
+                        }
+                    }
                 }
-                other => {
-                    return Err(TypeError::Other(format!(
-                        "Glue: equivalence argument has unexpected type: {}",
-                        other
-                    )));
+                _ => {
+                    let te_ty = infer_dt(dts, ctx, te)?;
+                    match nbe_eval(&te_ty) {
+                        Term::TUniv(k) => k,
+                        Term::TEquiv(a, b) => {
+                            let a_ = nbe_eval(&a);
+                            let b_ = nbe_eval(&b);
+                            require_equal(ctx, &b_, &a_ty_)?;
+                            let p = type_level_dt(dts, ctx, &a_)?;
+                            let q = type_level_dt(dts, ctx, &b_)?;
+                            p.max(q)
+                        }
+                        Term::TMkEquiv(a, b, _, _, _, _) => {
+                            let a_ = nbe_eval(&a);
+                            let b_ = nbe_eval(&b);
+                            require_equal(ctx, &b_, &a_ty_)?;
+                            let p = type_level_dt(dts, ctx, &a_)?;
+                            let q = type_level_dt(dts, ctx, &b_)?;
+                            p.max(q)
+                        }
+                        other => {
+                            return Err(TypeError::Other(format!(
+                                "Glue: equivalence argument has unexpected type: {}",
+                                other
+                            )));
+                        }
+                    }
                 }
             };
             Ok(Term::TUniv(n.max(m)))
@@ -1318,23 +1380,51 @@ pub fn check_dt(dts: &[Datatype], ctx: &Ctx, t: &Term, ty: &Term) -> Result<(), 
         }
 
         // GlueElem checking
-        Term::TGlueElem(phi, t_inner, a) => match nbe_eval(ty) {
+        Term::TGlueElem(phi, t_inner, a) => {
+            // Try to use the type as-is first (preserves Glue structure from
+            // the annotation). Fall back to nbe_eval for neutral Glue types.
+            let glue = match ty {
+                Term::TGlue(_, _, _) => ty,
+                _ => &nbe_eval(ty),
+            };
+            match glue {
             Term::TGlue(a_ty, phi_, te) => {
                 check_interval(ctx, phi)?;
                 require_equal(ctx, &nbe_eval(&phi_), &nbe_eval(phi))?;
                 let t_ty = match nbe_eval(&te) {
                     Term::TMkEquiv(dom_a, _, _, _, _, _) => nbe_eval(&dom_a),
                     Term::TEquiv(dom_a, _) => nbe_eval(&dom_a),
+                    Term::TPair(te_a, _) => nbe_eval(&te_a),
+                    Term::TAbs(_, body) => {
+                        let body_at_1 = beta(&body, &Term::TInterval(I::I1));
+                        match body_at_1 {
+                            Term::TPair(ref te_a, _) => nbe_eval(te_a),
+                            other => other,
+                        }
+                    }
                     other => other,
                 };
-                check_dt(dts, ctx, t_inner, &t_ty)?;
+                // The cap may be a trivial path (lambda over the interval) or a
+                // direct element — handle both by wrapping in I -> dom_ty when
+                // the cap is syntactically a lambda.
+                let cap_ty = match &**t_inner {
+                    Term::TAbs(_, _) => {
+                        // Shift t_ty up by 1 because the TPi binder will be
+                        // pushed into the context during checking.
+                        let shifted_t_ty = shift(1, 0, &t_ty);
+                        Term::TPi("_".into(), Box::new(Term::TIntervalTy), Box::new(shifted_t_ty))
+                    }
+                    _ => t_ty.clone(),
+                };
+                check_dt(dts, ctx, t_inner, &cap_ty)?;
                 check_dt(dts, ctx, a, &nbe_eval(&a_ty))
             }
             other => Err(TypeError::Other(format!(
                 "glue: expected Glue type, got: {}",
                 other
             ))),
-        },
+            }
+        }
 
         // Pair introduction
         Term::TPair(a, b) => {

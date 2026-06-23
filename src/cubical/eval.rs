@@ -129,7 +129,14 @@ pub fn eval(t: &Term) -> Term {
         Term::TGlue(a_ty, phi, te) => {
             let phi_ = eval(phi);
             if is_top_dnf(&phi_) {
-                equiv_dom(&eval(te))
+                let te_ = eval(te);
+                match &te_ {
+                    Term::TAbs(_, body) => {
+                        let body_at_1 = beta(body, &Term::TInterval(I::I1));
+                        equiv_dom(&body_at_1)
+                    }
+                    other => equiv_dom(other),
+                }
             } else if is_bot_dnf(&phi_) {
                 eval(a_ty)
             } else {
@@ -524,6 +531,7 @@ pub fn equiv_dom(t: &Term) -> Term {
     match t {
         Term::TMkEquiv(a, _, _, _, _, _) => (**a).clone(),
         Term::TEquiv(a, _) => (**a).clone(),
+        Term::TPair(a, _) => (**a).clone(),
         other => other.clone(),
     }
 }

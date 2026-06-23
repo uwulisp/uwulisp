@@ -156,7 +156,13 @@ pub fn eval_nbe(env: &[Value], t: &Term) -> Value {
             let phi = value_to_dnf(eval_nbe(env, phi));
             let te = eval_nbe(env, te);
             if phi == dnf_top() {
-                equiv_dom_value(te)
+                match te {
+                    Value::VLam(_, clos) => {
+                        let body = clos.apply(Value::VInterval(I::I1));
+                        equiv_dom_value(body)
+                    }
+                    other => equiv_dom_value(other),
+                }
             } else if phi == dnf_bot() {
                 eval_nbe(env, a)
             } else {
@@ -540,6 +546,7 @@ fn do_equiv_fwd(e: Value, x: Value) -> Value {
 fn equiv_dom_value(v: Value) -> Value {
     match v {
         Value::VMkEquiv(a, _, _, _, _, _) | Value::VEquiv(a, _) => *a,
+        Value::VPair(a, _) => *a,
         other => other,
     }
 }

@@ -183,19 +183,22 @@ fn process_data(dt: &crate::cubical::syntax::Datatype, env: &mut Env) -> Result<
 
 fn process_def(name: &Name, ty: &Term, val: &Term, env: &mut Env) -> Result<RunOutput, RunError> {
     println!("Checking definition: {}", name);
-    let closed_ty = nbe_eval(&apply_globals(&env.defs, ty));
+    let closed_ty_globals = apply_globals(&env.defs, ty);
     let closed_val = val.clone();
 
-    match nbe_eval(&infer_with_full_env(env, &closed_ty)?) {
+    // Normalize only for the universe-level check; keep the original
+    // structure (e.g., Glue types) intact for body checking.
+    let closed_ty_nf = nbe_eval(&closed_ty_globals);
+    match nbe_eval(&infer_with_full_env(env, &closed_ty_nf)?) {
         Term::TUniv(_) => {}
         other => return Err(TypeError::ExpectedUniverse(other).into()),
     }
     // Register before checking the body so recursive calls resolve.
-    env.define(name.clone(), closed_ty.clone(), closed_val.clone());
-    check_with_full_env(env, &closed_val, &closed_ty)?;
+    env.define(name.clone(), closed_ty_globals.clone(), closed_val.clone());
+    check_with_full_env(env, &closed_val, &closed_ty_globals)?;
     let output = RunOutput {
         name: name.clone(),
-        ty: closed_ty.clone(),
+        ty: closed_ty_globals.clone(),
         value: nbe_eval(&closed_val),
     };
 
