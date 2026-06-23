@@ -197,20 +197,21 @@ fn process_def(
     env: &mut Env,
 ) -> Result<RunOutput, RunError> {
     let closed_ty = nbe_eval(&apply_globals(&env.defs, ty));
-    let closed_val = nbe_eval(&apply_globals(&env.defs, val));
+    let closed_val = val.clone();
 
     match nbe_eval(&infer_with_full_env(env, &closed_ty)?) {
         Term::TUniv(_) => {}
         other => return Err(TypeError::ExpectedUniverse(other).into()),
     }
+    // Register before checking the body so recursive calls resolve.
+    env.define(name.clone(), closed_ty.clone(), closed_val.clone());
     check_with_full_env(env, &closed_val, &closed_ty)?;
     let output = RunOutput {
         name: name.clone(),
         ty: closed_ty.clone(),
-        value: closed_val.clone(),
+        value: nbe_eval(&closed_val),
     };
 
-    env.define(name.clone(), closed_ty, closed_val);
     Ok(output)
 }
 
@@ -264,6 +265,21 @@ mod tests {
         let err = run(&a_path).unwrap_err();
         assert!(matches!(err, RunError::Import(_)));
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn run_plus_on_nat() {
+        let src = "data Nat = | zero : Nat | suc : Nat -> Nat\n\
+                   def plus : Nat -> Nat -> Nat = \\m n. elim (\\_. Nat) \
+                   { | zero => n | suc m' => suc (plus m' n) } m\n\
+                   def four : Nat = plus (suc (suc zero)) (suc (suc zero))";
+        let dir = std::env::temp_dir().join(format!("cubical_plus_test_{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("main.uwuc");
+        fs::write(&path, src).unwrap();
+        let output = run(&path).expect("plus should typecheck");
+        assert_eq!(output.name, "four");
         let _ = fs::remove_dir_all(&dir);
     }
 }

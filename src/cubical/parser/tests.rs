@@ -2,7 +2,7 @@ use super::grammar::Parser;
 use super::lexer::{Lexer, TokenKind};
 use super::*;
 use crate::cubical::interval::I;
-use crate::cubical::syntax::show_term;
+use crate::cubical::syntax::{show_term, Term};
 
 #[test]
 fn parses_lambda_identity() {
@@ -293,4 +293,46 @@ fn round_trip_with_show_term() {
     let printed = show_term(&[], &term);
     let reparsed = parse_term(&printed).unwrap();
     assert_eq!(term, reparsed);
+}
+#[test]
+fn dependent_arrow_type_typechecks() {
+    use crate::cubical::typechecker::infer;
+    let ctx = Vec::new();
+    let ty = parse_term("(A : U0) -> A -> A").unwrap();
+    let inferred = infer(&ctx, &ty).expect("type should be well-formed");
+    assert_eq!(inferred, Term::TUniv(0));
+}
+
+#[test]
+fn multi_binder_lambda_matches_nested() {
+    let nested = parse_term("\\A. \\x. x").unwrap();
+    let multi = parse_term("\\A x. x").unwrap();
+    assert_eq!(nested, multi);
+}
+
+#[test]
+fn id_definition_typechecks() {
+    use crate::cubical::typechecker::{check, infer};
+    let ctx = Vec::new();
+    let ty = parse_term("(A : U0) -> A -> A").unwrap();
+    let val = parse_term("\\A x. x").unwrap();
+    infer(&ctx, &ty).expect("id type");
+    check(&ctx, &val, &ty).expect("id body");
+}
+
+#[test]
+fn recursive_definition_parses() {
+    let src = "data Nat = | zero : Nat | suc : Nat -> Nat\n\
+               def plus : Nat -> Nat -> Nat = \\m n. plus";
+    let decls = parse_program(src).expect("recursive def should parse");
+    assert_eq!(decls.len(), 2);
+}
+
+#[test]
+fn recursive_plus_case_parses_global_reference() {
+    let src = "data Nat = | zero : Nat | suc : Nat -> Nat\n\
+               def plus : Nat -> Nat -> Nat = \\m n. elim (\\_. Nat) \
+               { | zero => n | suc m' => suc (plus m' n) } m";
+    let decls = parse_program(src).expect("recursive def should parse");
+    assert_eq!(decls.len(), 2);
 }

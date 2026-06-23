@@ -99,7 +99,7 @@ impl ProgramParser {
             return Err(self.parser.error_here("expected top-level declaration"));
         };
         match &decl {
-            Decl::Def { name, .. } => self.parser.global_env.insert(0, name.clone()),
+            Decl::Def { .. } => {}
             Decl::Data(dt) => self.parser.datatypes.push(dt.clone()),
             Decl::Import { .. } => {}
         }

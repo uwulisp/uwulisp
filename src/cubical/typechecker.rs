@@ -201,19 +201,19 @@ pub fn require_universe(ctx: &Ctx, t: &Term) -> Result<Level, TypeError> {
 }
 
 fn type_level_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Level, TypeError> {
-    match nbe_eval(t) {
-        Term::TUniv(n) => Ok(n),
-        Term::TData(_) => Ok(0),
-        Term::TIntervalTy => Ok(0),
+    // Match type formers structurally first. `nbe_eval` on a Π-type that still
+    // mentions outer binders can collapse free de Bruijn indices and break
+    // universe-level checking for dependent arrows like `(A : U0) -> A -> A`.
+    match t {
         Term::TPi(x, a, b) => {
-            let i = type_level_dt(dts, ctx, &a)?;
-            let ctx2 = extend_ctx(x.clone(), nbe_eval(&a), ctx);
-            let j = type_level_dt(dts, &ctx2, &b)?;
+            let i = type_level_dt(dts, ctx, a)?;
+            let ctx2 = extend_ctx(x.clone(), nbe_eval(a), ctx);
+            let j = type_level_dt(dts, &ctx2, b)?;
             Ok(i.max(j))
         }
         Term::TPath(a, u, v) => {
-            let n = type_level_dt(dts, ctx, &a)?;
-            let a_ = nbe_eval(&a);
+            let n = type_level_dt(dts, ctx, a)?;
+            let a_ = nbe_eval(a);
             let u_ty = match &a_ {
                 Term::PLam(_, body) => nbe_eval(&beta(body, &Term::TInterval(I::I0))),
                 p => p.clone(),
@@ -222,28 +222,33 @@ fn type_level_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Level, TypeErr
                 Term::PLam(_, body) => nbe_eval(&beta(body, &Term::TInterval(I::I1))),
                 p => p.clone(),
             };
-            check_dt(dts, ctx, &u, &u_ty)?;
-            check_dt(dts, ctx, &v, &v_ty)?;
+            check_dt(dts, ctx, u, &u_ty)?;
+            check_dt(dts, ctx, v, &v_ty)?;
             Ok(n)
         }
         Term::TEquiv(a, b) => {
-            let n = type_level_dt(dts, ctx, &a)?;
-            let m = type_level_dt(dts, ctx, &b)?;
+            let n = type_level_dt(dts, ctx, a)?;
+            let m = type_level_dt(dts, ctx, b)?;
             Ok(n.max(m))
         }
         Term::TSigma(x, a, b) => {
-            let i = type_level_dt(dts, ctx, &a)?;
-            let ctx2 = extend_ctx(x.clone(), nbe_eval(&a), ctx);
-            let j = type_level_dt(dts, &ctx2, &b)?;
+            let i = type_level_dt(dts, ctx, a)?;
+            let ctx2 = extend_ctx(x.clone(), nbe_eval(a), ctx);
+            let j = type_level_dt(dts, &ctx2, b)?;
             Ok(i.max(j))
         }
-        _ => {
-            let ty = infer_dt(dts, ctx, t)?;
-            match nbe_eval(&ty) {
-                Term::TUniv(n) => Ok(n),
-                other => Err(TypeError::ExpectedUniverse(other)),
+        _ => match nbe_eval(t) {
+            Term::TUniv(n) => Ok(n),
+            Term::TData(_) => Ok(0),
+            Term::TIntervalTy => Ok(0),
+            _ => {
+                let ty = infer_dt(dts, ctx, t)?;
+                match nbe_eval(&ty) {
+                    Term::TUniv(n) => Ok(n),
+                    other => Err(TypeError::ExpectedUniverse(other)),
+                }
             }
-        }
+        },
     }
 }
 
@@ -483,14 +488,18 @@ pub fn infer_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Term, TypeError
         Term::TUniv(n) => Ok(Term::TUniv(n + 1)),
 
         // Application: f a  where  f : Π(x:A).B
-        Term::TApp(f, a) => match infer(ctx, f) {
-            Ok(f_ty) => match nbe_eval(&f_ty) {
-                Term::TPi(_, a_ty, b_ty) => {
-                    check(ctx, a, &a_ty)?;
-                    Ok(nbe_eval(&beta(&b_ty, a)))
-                }
-                other => Err(TypeError::ExpectedPi(other)),
-            },
+        Term::TApp(f, a) => match infer_dt(dts, ctx, f) {
+            Ok(f_ty) => {
+                let (a_ty, b_ty) = match &f_ty {
+                    Term::TPi(_, a, b) => (a.as_ref().clone(), b.as_ref().clone()),
+                    _ => match nbe_eval(&f_ty) {
+                        Term::TPi(_, a, b) => (a.as_ref().clone(), b.as_ref().clone()),
+                        other => return Err(TypeError::ExpectedPi(other)),
+                    },
+                };
+                check_dt(dts, ctx, a, &a_ty)?;
+                Ok(nbe_eval(&beta(&b_ty, a)))
+            }
             Err(e) => infer_via_reduction(ctx, t, e),
         },
 
@@ -1186,32 +1195,44 @@ pub fn check(ctx: &Ctx, t: &Term, ty: &Term) -> Result<(), TypeError> {
 pub fn check_dt(dts: &[Datatype], ctx: &Ctx, t: &Term, ty: &Term) -> Result<(), TypeError> {
     match t {
         // Lambda introduction
-        Term::TAbs(x, body) => match nbe_eval(ty) {
-            Term::TPi(_, a_ty, b_ty) => check_dt(
+        Term::TAbs(x, body) => {
+            let (a_ty, b_ty) = match ty {
+                Term::TPi(_, a, b) => (a.as_ref().clone(), b.as_ref().clone()),
+                _ => match nbe_eval(ty) {
+                    Term::TPi(_, a, b) => (a.as_ref().clone(), b.as_ref().clone()),
+                    other => return Err(TypeError::ExpectedPi(other)),
+                },
+            };
+            check_dt(
                 dts,
                 &extend_ctx(x.clone(), nbe_eval(&a_ty), ctx),
                 body,
                 &b_ty,
-            ),
-            other => Err(TypeError::ExpectedPi(other)),
-        },
+            )
+        }
 
         // Path-lambda introduction
-        Term::PLam(i, body) => match nbe_eval(ty) {
-            Term::TPath(a_ty, u, v) => {
-                let ctx2 = extend_ctx(i.clone(), interval_ty(), ctx);
-                let body_ty = match nbe_eval(&a_ty) {
-                    p @ Term::PLam { .. } => p,
-                    plain => shift(1, 0, &plain),
-                };
-                let body_at0 = nbe_eval(&beta(body, &Term::TInterval(I::I0)));
-                let body_at1 = nbe_eval(&beta(body, &Term::TInterval(I::I1)));
-                require_equal_endpt(ctx, &nbe_eval(&u), &body_at0)?;
-                require_equal_endpt(ctx, &nbe_eval(&v), &body_at1)?;
-                check_dt(dts, &ctx2, body, &body_ty)
-            }
-            other => Err(TypeError::ExpectedPath(other)),
-        },
+        Term::PLam(i, body) => {
+            let (a_ty, u, v) = match ty {
+                Term::TPath(a, u, v) => (a.as_ref().clone(), u.as_ref().clone(), v.as_ref().clone()),
+                _ => match nbe_eval(ty) {
+                    Term::TPath(a, u, v) => {
+                        (a.as_ref().clone(), u.as_ref().clone(), v.as_ref().clone())
+                    }
+                    other => return Err(TypeError::ExpectedPath(other)),
+                },
+            };
+            let ctx2 = extend_ctx(i.clone(), interval_ty(), ctx);
+            let body_ty = match nbe_eval(&a_ty) {
+                p @ Term::PLam { .. } => p,
+                plain => shift(1, 0, &plain),
+            };
+            let body_at0 = nbe_eval(&beta(body, &Term::TInterval(I::I0)));
+            let body_at1 = nbe_eval(&beta(body, &Term::TInterval(I::I1)));
+            require_equal_endpt(ctx, &nbe_eval(&u), &body_at0)?;
+            require_equal_endpt(ctx, &nbe_eval(&v), &body_at1)?;
+            check_dt(dts, &ctx2, body, &body_ty)
+        }
 
         // GlueElem checking
         Term::TGlueElem(phi, t_inner, a) => match nbe_eval(ty) {
@@ -1233,13 +1254,17 @@ pub fn check_dt(dts: &[Datatype], ctx: &Ctx, t: &Term, ty: &Term) -> Result<(), 
         },
 
         // Pair introduction
-        Term::TPair(a, b) => match nbe_eval(ty) {
-            Term::TSigma(_, a_ty, b_ty) => {
-                check_dt(dts, ctx, a, &nbe_eval(&a_ty))?;
-                check_dt(dts, ctx, b, &nbe_eval(&beta(&b_ty, a)))
-            }
-            other => Err(TypeError::ExpectedSigma(other)),
-        },
+        Term::TPair(a, b) => {
+            let (a_ty, b_ty) = match ty {
+                Term::TSigma(_, a, b) => (a.as_ref().clone(), b.as_ref().clone()),
+                _ => match nbe_eval(ty) {
+                    Term::TSigma(_, a, b) => (a.as_ref().clone(), b.as_ref().clone()),
+                    other => return Err(TypeError::ExpectedSigma(other)),
+                },
+            };
+            check_dt(dts, ctx, a, &nbe_eval(&a_ty))?;
+            check_dt(dts, ctx, b, &nbe_eval(&beta(&b_ty, a)))
+        }
 
         // Constructor introduction — checked bidirectionally.
         //

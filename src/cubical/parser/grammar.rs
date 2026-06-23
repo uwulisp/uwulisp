@@ -47,7 +47,7 @@ impl Parser {
                 return Err(self.error_here("expected top-level declaration"));
             };
             match &decl {
-                Decl::Def { name, .. } => self.global_env.insert(0, name.clone()),
+                Decl::Def { .. } => {}
                 Decl::Data(dt) => self.datatypes.push(dt.clone()),
                 Decl::Import { .. } => {}
             }
@@ -72,6 +72,8 @@ impl Parser {
             TokenKind::Equals,
             format!("expected '=' after type for definition '{}'", name),
         )?;
+        // Allow the definition body to refer to itself (and later globals).
+        self.global_env.insert(0, name.clone());
         let val = self.parse_term()?;
         Ok(Decl::Def { name, ty, val })
     }
@@ -181,7 +183,7 @@ impl Parser {
         if self.consume(&TokenKind::Backslash) {
             let binders = self.parse_one_or_more_idents("expected lambda binder after '\\'")?;
             self.expect(TokenKind::Dot, "expected '.' after lambda binder list")?;
-            for binder in binders.iter().rev() {
+            for binder in &binders {
                 self.term_env.insert(0, binder.clone());
             }
             let body = self.parse_term()?;
@@ -200,7 +202,7 @@ impl Parser {
                 TokenKind::FatArrow,
                 "expected '=>' after function binder list",
             )?;
-            for binder in binders.iter().rev() {
+            for binder in &binders {
                 self.term_env.insert(0, binder.clone());
             }
             let body = self.parse_term()?;

@@ -1,0 +1,14 @@
+data Nat =
+  | zero : Nat
+  | suc : Nat -> Nat
+
+def id : (A : U0) -> A -> A = \A x. x
+
+def plus : Nat -> Nat -> Nat =
+  \m n. elim (\_. Nat)
+    { | zero => n
+      | suc m' => suc (plus m' n)
+    } m
+
+def two : Nat = suc (suc zero)
+def four : Nat = plus two two
