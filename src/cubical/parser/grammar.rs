@@ -167,7 +167,7 @@ impl Parser {
     fn parse_face_with_extra_datatype(&mut self, dt: &Datatype) -> Result<Term, ParseError> {
         let old_len = self.datatypes.len();
         self.datatypes.push(dt.clone());
-        let term = self.parse_arrow_star();
+        let term = self.parse_arrow();
         self.datatypes.truncate(old_len);
         term
     }
@@ -269,7 +269,7 @@ impl Parser {
     }
 
     fn parse_pair(&mut self) -> Result<Term, ParseError> {
-        let left = self.parse_arrow_star()?;
+        let left = self.parse_arrow()?;
         if self.consume(&TokenKind::Comma) {
             let right = self.parse_term()?;
             Ok(Term::TPair(Box::new(left), Box::new(right)))
@@ -278,16 +278,27 @@ impl Parser {
         }
     }
 
-    fn parse_arrow_star(&mut self) -> Result<Term, ParseError> {
-        let left = self.parse_join()?;
+    /// Parse `->` (non-dependent Pi) at the lowest precedence.
+    /// `A * B -> C * D` parses as `(A * B) -> (C * D)`.
+    fn parse_arrow(&mut self) -> Result<Term, ParseError> {
+        let left = self.parse_sigma()?;
         if self.consume(&TokenKind::Arrow) {
             self.term_env.insert(0, "_".to_string());
-            let right = self.parse_arrow_star()?;
+            let right = self.parse_arrow()?;
             self.term_env.remove(0);
             Ok(Term::TPi("_".to_string(), Box::new(left), Box::new(right)))
-        } else if self.consume(&TokenKind::Star) {
+        } else {
+            Ok(left)
+        }
+    }
+
+    /// Parse `*` (non-dependent Sigma/product) at a higher precedence than `->`.
+    /// `A * B * C` parses as `A * (B * C)` (right-associative).
+    fn parse_sigma(&mut self) -> Result<Term, ParseError> {
+        let left = self.parse_join()?;
+        if self.consume(&TokenKind::Star) {
             self.term_env.insert(0, "_".to_string());
-            let right = self.parse_arrow_star()?;
+            let right = self.parse_sigma()?;
             self.term_env.remove(0);
             Ok(Term::TSigma(
                 "_".to_string(),
@@ -475,14 +486,17 @@ impl Parser {
         if let Some(name) = self.try_parse_binder_header()? {
             self.expect(TokenKind::RParen, "unmatched '('")?;
             if self.consume(&TokenKind::Arrow) {
+                // (x : T) -> body  — dependent Pi; body is an arrow-level term
                 self.term_env.insert(0, name.0.clone());
-                let body = self.parse_arrow_star()?;
+                let body = self.parse_arrow()?;
                 self.term_env.remove(0);
                 return Ok(Term::TPi(name.0, Box::new(name.1), Box::new(body)));
             }
             if self.consume(&TokenKind::Star) {
+                // (x : T) * body  — dependent Sigma; body is a sigma-level term
+                // (does NOT swallow a following `->`, since `->` binds more loosely)
                 self.term_env.insert(0, name.0.clone());
-                let body = self.parse_arrow_star()?;
+                let body = self.parse_sigma()?;
                 self.term_env.remove(0);
                 return Ok(Term::TSigma(name.0, Box::new(name.1), Box::new(body)));
             }

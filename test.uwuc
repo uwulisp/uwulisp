@@ -30,8 +30,8 @@ def flipLoop : S1 -> S1 =
     | base => base
     | loop i => <i> loop @ (~ i)
 
-def swap : (A : U0) * (B : U0) -> (B : U0) * (A : U0) =
-  \p. (snd p , fst p)
+def swap : (A : U0) -> (B : U0) -> A * B -> B * A =
+  \A B p. (snd p , fst p)
 
 def compose : (A : U0) -> (B : U0) -> (C : U0)
             -> (B -> C) -> (A -> B) -> A -> C =
