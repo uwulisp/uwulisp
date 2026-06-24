@@ -206,7 +206,11 @@ fn compile_expr(
 
         // ── symbol lookup ─────────────────────────────────────────────────────
         Expr::Symbol(s) => {
-            chunk.emit(Op::LoadVar(s.clone()));
+            if s.starts_with(':') {
+                chunk.emit(Op::LoadConst(Value::Symbol(s.clone())));
+            } else {
+                chunk.emit(Op::LoadVar(s.clone()));
+            }
             Ok(())
         }
 
