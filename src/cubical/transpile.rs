@@ -75,7 +75,6 @@ pub fn transpile_source(root_path: &Path, source: &str) -> Result<TranspileOutpu
     collector.collect_file(root_path, source)?;
 
     let mut modules = Vec::new();
-    let mut any_cubical = false;
     let mut datatype_info = HashMap::new();
 
     for file in &collector.files {
@@ -90,9 +89,6 @@ pub fn transpile_source(root_path: &Path, source: &str) -> Result<TranspileOutpu
             .and_then(|s| s.to_str())
             .unwrap_or("input.uwuc");
         let hs_source = emit_module(&mut ctx, &file.decls, source_comment);
-        if ctx.uses_cubical {
-            any_cubical = true;
-        }
         modules.push(EmittedModule {
             path: hs_path_from_uwuc_path(&file.uwuc_path),
             source: hs_source,
@@ -106,8 +102,8 @@ pub fn transpile_source(root_path: &Path, source: &str) -> Result<TranspileOutpu
         .find(|f| canonical_import_path(&f.uwuc_path) == root_canonical)
     {
         if let Some((entry_name, entry_ty)) =
-            root_file.decls.iter().rev().find_map(|decl| match decl {
-                Decl::Def { name, ty, .. } => Some((name.as_str(), ty)),
+            root_file.decls.iter().find_map(|decl| match decl {
+                Decl::Def { name, ty, .. } if name == "main" => Some((name.as_str(), ty)),
                 _ => None,
             })
         {
@@ -122,7 +118,6 @@ pub fn transpile_source(root_path: &Path, source: &str) -> Result<TranspileOutpu
                 entry_name,
                 entry_ty,
                 &datatype_info,
-                any_cubical,
             );
             modules.push(EmittedModule {
                 path: PathBuf::from("Main.hs"),
@@ -131,16 +126,10 @@ pub fn transpile_source(root_path: &Path, source: &str) -> Result<TranspileOutpu
         }
     }
 
-    let prelude = if any_cubical {
-        Some(EmittedModule {
-            path: PathBuf::from("Cubical/Prelude.hs"),
-            source: CUBICAL_PRELUDE_HS.to_string(),
-        })
-    } else {
-        None
-    };
-
-    Ok(TranspileOutput { modules, prelude })
+    Ok(TranspileOutput {
+        modules,
+        prelude: None,
+    })
 }
 
 /// Write all emitted modules (and optional prelude) under `out_dir`.
@@ -271,8 +260,6 @@ fn canonical_import_path(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-const CUBICAL_PRELUDE_HS: &str = include_str!("../../runtime/haskell/Cubical/Prelude.hs");
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,12 +343,12 @@ mod tests {
     }
 
     #[test]
-    fn transpile_includes_prelude_for_cubical_terms() {
+    fn transpile_erases_cubical_terms_to_plain_haskell() {
         let src = "def x : I = i0\n";
         let out = transpile_source(Path::new("test.uwuc"), src).expect("should transpile");
-        assert!(out.prelude.is_some());
+        assert!(out.prelude.is_none());
         let test_mod = &out.modules[0].source;
-        assert!(test_mod.contains("import Cubical.Prelude"));
-        assert!(test_mod.contains("i0"));
+        assert!(!test_mod.contains("Cubical.Prelude"));
+        assert!(!test_mod.contains("i0"));
     }
 }
