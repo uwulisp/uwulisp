@@ -41,47 +41,82 @@ Returns `()`.
 Calls a C function pointer.
 
 ```
-(ccall fn arg1 arg2 ...)  →  Number | Int
+(ccall fn [ret-type] arg1 arg2 ...)  →  Number | Int | ()
 ```
 
 `fn` must be a function pointer (integer, as returned by `lisp-dlsym`). Accepts 0–6 arguments.
+
+#### `Return type annotation`
+
+An optional return-type keyword may be placed as the second argument (before any call arguments):
+
+| Keyword   | C return type | Lisp result    |
+|-----------|---------------|----------------|
+| `:int`    | `int64_t`     | `Expr::Int`    |
+| `:float`  | `double`      | `Expr::Float`  |
+| `:void`   | *(none)*      | `Expr::List(vec![])` = `()` |
+| `:ptr`    | `void*`       | `Expr::Int`    |
+
+When omitted, the return type is inferred:
+- **All arguments are `Float`** → `Expr::Float`
+- **Otherwise** → `Expr::Int`
 
 #### `Argument marshaling`
 
 Arguments are automatically marshaled between Lisp and C types:
 
-| Lisp type      | C type      |
-|----------------|-------------|
-| `Int`          | `int64_t`   |
-| `Float`        | `double`    |
+| Lisp type      | C type        |
+|----------------|---------------|
+| `Int`          | `int64_t`     |
+| `Float`        | `double`      |
 | `Bool`         | `int64_t` (1/0) |
-| `Str`          | `const char*` (leaked) |
-| `Symbol`       | `const char*` (leaked) |
+| `Str`          | `const char*` |
+| `Symbol`       | `const char*` |
 
-#### `Return type`
+String/Symbol arguments are converted to temporary C strings that are freed after the call returns (no memory leak). Prefer passing raw pointers as `Int` for non-trivial string lifetimes.
 
-- **All arguments are `Float`** → `ccall` uses the double calling convention and returns `Expr::Float`.
-- **Otherwise** → `ccall` uses the integer calling convention and returns `Expr::Int`.
+#### `Per-argument type annotations`
 
-String/Symbol arguments are converted to C strings via `CString::into_raw` (the memory is **leaked** — the C function is expected to use the string before returning, or the caller must manage the memory manually). Prefer passing raw pointers as `Int` for non-trivial string lifetimes.
+Each call argument may optionally be wrapped in a list `(type value)` to override the inferred type:
+
+```
+(ccall fn (:int x) (:float y) ...)
+```
+
+Supported type specifiers: `:int`, `:float`, `:ptr`, `:str`, `:string`, `:bool`.
+
+This is useful when a C function expects a different numeric type than the Lisp value would imply.
+
+#### `Mixed float/integer arguments`
+
+Arguments of mixed float and integer types are supported for up to 6 arguments. The calling convention follows the x86-64 SysV ABI (and generalizes to any platform Rust supports) by using `transmute` to the exact `extern "C" fn(…)` signature matching the C function's prototype.
 
 #### `Limitations`
 
 - Maximum 6 arguments (x86-64 SysV ABI register limit).
-- Mixed float/integer arguments are not supported in a single call — use all-float or all-integer mode.
-- Function pointer must use the `extern "C"` calling convention.
+- Mixed float/integer arguments beyond 6 are not supported; use all-float or all-integer mode.
+- Function pointer must use the `extern "C" calling convention.
 - No automatic struct/union marshaling — pass structs by pointer as `Int`.
 
-#### `Example`
+#### `Examples`
 
 ```lisp
-;; Call sqrt from libm:
+;; Load libm and call sqrt, inferring float return:
 (define lib (lisp-dlopen "libm.so.6"))
 (define sqrt (lisp-dlsym lib "sqrt"))
-(ccall sqrt 9.0)   ;; → 3.0
+(ccall sqrt 9.0)           ;; → 3.0
+
+;; Explicit return type:
+(ccall sqrt :float 9.0)    ;; → 3.0
+(ccall sqrt :void 9.0)     ;; → ()
 
 ;; Integer function (e.g. from libc):
 (define libc (lisp-dlopen "libc.so.6"))
 (define abs (lisp-dlsym libc "abs"))
-(ccall abs -42)     ;; → 42
+(ccall abs -42)             ;; → 42
+(ccall abs :int -42)        ;; → 42
+
+;; Mixed argument types — hypot(double x, double y):
+(define hypot (lisp-dlsym lib "hypot"))
+(ccall hypot 3.0 4.0)      ;; → 5.0
 ```
