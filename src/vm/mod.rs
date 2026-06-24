@@ -233,7 +233,7 @@ mod tests {
 
         // The binding should now be visible
         let res2 = eval_str("x", &mut heap, env).unwrap();
-        assert!(matches!(res2, Expr::Number(n) if n == 42.0));
+        assert!(matches!(res2, Expr::Int(n) if n == 42));
     }
 
     #[test]
@@ -243,7 +243,7 @@ mod tests {
 
         // Basic let
         let res = eval_str("(let ((x 3) (y 4)) (+ x y))", &mut heap, env).unwrap();
-        assert!(matches!(res, Expr::Number(n) if n == 7.0));
+        assert!(matches!(res, Expr::Int(n) if n == 7));
     }
 
     #[test]
@@ -254,11 +254,11 @@ mod tests {
         // let bindings are not visible outside the body
         eval_str("(define z 99)", &mut heap, env).unwrap();
         let res = eval_str("(let ((z 1)) z)", &mut heap, env).unwrap();
-        assert!(matches!(res, Expr::Number(n) if n == 1.0));
+        assert!(matches!(res, Expr::Int(n) if n == 1));
 
         // After the let, z should still be 99 in the outer env
         let res2 = eval_str("z", &mut heap, env).unwrap();
-        assert!(matches!(res2, Expr::Number(n) if n == 99.0));
+        assert!(matches!(res2, Expr::Int(n) if n == 99));
     }
 
     #[test]
@@ -268,7 +268,7 @@ mod tests {
 
         // let* allows later bindings to see earlier ones
         let res = eval_str("(let* ((x 1) (y (+ x 1))) y)", &mut heap, env).unwrap();
-        assert!(matches!(res, Expr::Number(n) if n == 2.0));
+        assert!(matches!(res, Expr::Int(n) if n == 2));
     }
 
     #[test]
@@ -278,11 +278,11 @@ mod tests {
 
         // This is compilable, so it runs in the VM
         let res1 = eval_str("(+ 10 20)", &mut heap, env).unwrap();
-        assert!(matches!(res1, Expr::Number(n) if n == 30.0));
+        assert!(matches!(res1, Expr::Int(n) if n == 30));
 
         // This still falls back to tree-walker (uses lambda)
         let res2 = eval_str("(let ((x 5)) ((lambda (y) (+ x y)) 10))", &mut heap, env).unwrap();
-        assert!(matches!(res2, Expr::Number(n) if n == 15.0));
+        assert!(matches!(res2, Expr::Int(n) if n == 15));
     }
 
     #[test]
@@ -315,7 +315,7 @@ mod tests {
         crate::eval::eval_tree(&exprs[0], env, &mut heap).unwrap();
 
         let res4 = eval_str("(when (> 3 2) 77)", &mut heap, env).unwrap();
-        assert!(matches!(res4, Expr::Number(n) if n == 77.0));
+        assert!(matches!(res4, Expr::Int(n) if n == 77));
     }
 
     /// Verifies that macro calls work correctly in the hybrid VM+tree-walker
@@ -357,7 +357,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            matches!(r, Expr::Number(n) if n == 99.0),
+            matches!(r, Expr::Int(n) if n == 99),
             "top-level macro call failed: {:?}",
             r
         );
@@ -371,7 +371,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            matches!(r2, Expr::Number(n) if n == 42.0),
+            matches!(r2, Expr::Int(n) if n == 42),
             "macro inside let failed: {:?}",
             r2
         );
@@ -386,7 +386,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            matches!(r3, Expr::Number(n) if n == 14.0),
+            matches!(r3, Expr::Int(n) if n == 14),
             "macro inside lambda failed: {:?}",
             r3
         );
@@ -400,7 +400,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            matches!(r4, Expr::Number(n) if n == 7.0),
+            matches!(r4, Expr::Int(n) if n == 7),
             "macro as function argument failed: {:?}",
             r4
         );
@@ -415,7 +415,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            matches!(r5, Expr::Number(n) if n == 55.0),
+            matches!(r5, Expr::Int(n) if n == 55),
             "nested macro calls failed: {:?}",
             r5
         );
@@ -429,7 +429,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            matches!(r6, Expr::Number(n) if n == 11.0),
+            matches!(r6, Expr::Int(n) if n == 11),
             "macro inside let* binding failed: {:?}",
             r6
         );
@@ -447,8 +447,8 @@ mod tests {
         for i in 0..5_u32 {
             let res = eval_str("(+ 1 2)", &mut heap, env).unwrap();
             assert!(
-                matches!(res, Expr::Number(n) if n == 3.0),
-                "iteration {i}: expected 3.0, got {:?}",
+                matches!(res, Expr::Int(n) if n == 3),
+                "iteration {i}: expected 3, got {:?}",
                 res
             );
         }
@@ -487,7 +487,7 @@ mod tests {
         )
         .map(|r| {
             assert!(
-                matches!(r, Expr::Number(n) if n == 14.0),
+                matches!(r, Expr::Int(n) if n == 14),
                 "macro double failed: {:?}",
                 r
             );

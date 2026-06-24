@@ -50,10 +50,10 @@ fn parse_operand(expr: &Expr) -> Result<Operand, String> {
             let reg = parse_register(s)?;
             Ok(Operand::Reg(reg))
         }
-        Expr::Number(n) => {
-            // Guard against silent truncation of large f64 values.
+        Expr::Int(n) => {
+            // Guard against silent truncation of large i64 values.
             let n = *n;
-            if n < i32::MIN as f64 || n > i32::MAX as f64 {
+            if n < i32::MIN as i64 || n > i32::MAX as i64 {
                 return Err(format!(
                     "immediate value {} is out of i32 range; use Imm64 for large constants",
                     n
@@ -71,7 +71,7 @@ fn parse_operand(expr: &Expr) -> Result<Operand, String> {
                         None => None,
                     };
                     let disp = match parts.get(2) {
-                        Some(Expr::Number(n)) => *n as i32,
+                        Some(Expr::Int(n)) => *n as i32,
                         Some(_) => return Err("mem: displacement must be a number".into()),
                         None => 0,
                     };
@@ -651,7 +651,7 @@ pub fn register_assembler(env: Env, heap: &mut Heap) {
                     .map_err(|e| format!("JIT fn pointer failed: {}", e))?;
                 f()
             };
-            Ok(Expr::Number(result as f64))
+            Ok(Expr::Int(result as i64))
         })),
     );
 }
@@ -751,7 +751,7 @@ pub fn register_load_asm(env: Env, heap: &mut Heap) {
                     .map_err(|e| format!("load-asm: JIT fn pointer failed: {}", e))?;
                 f()
             };
-            Ok(Expr::Number(result as f64))
+            Ok(Expr::Int(result as i64))
         })),
     );
 }
@@ -862,7 +862,7 @@ pub fn register_load_asm_parallel(env: Env, heap: &mut Heap) {
                 .map(|h| {
                     h.join()
                         .map_err(|_| "load-asm-parallel: worker thread panicked".to_string())?
-                        .map(|n| Expr::Number(n as f64))
+                        .map(|n| Expr::Int(n as i64))
                 })
                 .collect::<Result<_, _>>()?;
 

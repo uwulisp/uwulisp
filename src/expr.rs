@@ -25,8 +25,10 @@ use crate::gc::{GcHandle, Heap};
 #[derive(Clone)]
 pub enum Expr {
     Symbol(String),
-    Number(f64),
-    /// A string literal, e.g. `"hello world"`.  Self-evaluating, like numbers.
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    /// A string literal, e.g. `"hello world"`.  Self-evaluating.
     Str(String),
     List(Vec<Expr>),
     /// A built-in function.  Still uses `Rc` because function pointers are
@@ -50,7 +52,9 @@ impl fmt::Debug for Expr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Expr::Symbol(s) => write!(f, "{}", s),
-            Expr::Number(n) => write!(f, "{}", n),
+            Expr::Int(n) => write!(f, "{}", n),
+            Expr::Float(n) => write!(f, "{}", n),
+            Expr::Bool(b) => write!(f, "{}", if *b { "#t" } else { "#f" }),
             Expr::Str(s) => write!(f, "{:?}", s),
             Expr::List(l) => {
                 write!(f, "(")?;
@@ -72,7 +76,9 @@ impl fmt::Debug for Expr {
 
 pub fn is_truthy(e: &Expr) -> bool {
     match e {
-        Expr::Number(n) => *n != 0.0,
+        Expr::Bool(b) => *b,
+        Expr::Int(n) => *n != 0,
+        Expr::Float(n) => *n != 0.0,
         Expr::Str(s) => !s.is_empty(),
         Expr::List(l) => !l.is_empty(),
         Expr::CubicalTerm(_) => true,

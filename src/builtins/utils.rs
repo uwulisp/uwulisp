@@ -17,10 +17,10 @@ pub fn register_strings(env: Env, heap: &mut Heap) {
             if args.len() != 1 {
                 return Err("string?: expects exactly 1 argument".into());
             }
-            Ok(Expr::Number(if let Expr::Str(_) = &args[0] {
-                1.0
+            Ok(Expr::Bool(if let Expr::Str(_) = &args[0] {
+                true
             } else {
-                0.0
+                false
             }))
         })),
     );
@@ -46,7 +46,7 @@ pub fn register_strings(env: Env, heap: &mut Heap) {
             if args.len() != 1 {
                 return Err("string-length: expects exactly 1 argument".into());
             }
-            Ok(Expr::Number(str_arg(&args[0])?.chars().count() as f64))
+            Ok(Expr::Int(str_arg(&args[0])?.chars().count() as i64))
         })),
     );
 
@@ -58,7 +58,7 @@ pub fn register_strings(env: Env, heap: &mut Heap) {
                 }
                 let a = str_arg(&args[0])?;
                 let b = str_arg(&args[1])?;
-                Ok(Expr::Number(if a $op b { 1.0 } else { 0.0 }))
+                Ok(Expr::Bool(a $op b))
             }))
         };
     }
@@ -79,7 +79,7 @@ pub fn register_strings(env: Env, heap: &mut Heap) {
             }
             let s = str_arg(&args[0])?;
             s.parse::<f64>()
-                .map(Expr::Number)
+                .map(Expr::Float)
                 .map_err(|_| format!("string->number: not a valid number: {:?}", s))
         })),
     );
@@ -195,7 +195,9 @@ pub fn register_misc(env: Env, heap: &mut Heap) {
 #[derive(Debug)]
 enum ThreadValue {
     Symbol(String),
-    Number(f64),
+    Int(i64),
+    Float(f64),
+    Bool(bool),
     Str(String),
     List(Vec<ThreadValue>),
 }
@@ -204,7 +206,9 @@ impl ThreadValue {
     fn from_expr(expr: Expr) -> Result<Self, String> {
         match expr {
             Expr::Symbol(s) => Ok(ThreadValue::Symbol(s)),
-            Expr::Number(n) => Ok(ThreadValue::Number(n)),
+            Expr::Int(n) => Ok(ThreadValue::Int(n)),
+            Expr::Float(n) => Ok(ThreadValue::Float(n)),
+            Expr::Bool(b) => Ok(ThreadValue::Bool(b)),
             Expr::Str(s) => Ok(ThreadValue::Str(s)),
             Expr::List(items) => items
                 .into_iter()
@@ -225,7 +229,9 @@ impl ThreadValue {
     fn into_expr(self) -> Expr {
         match self {
             ThreadValue::Symbol(s) => Expr::Symbol(s),
-            ThreadValue::Number(n) => Expr::Number(n),
+            ThreadValue::Int(n) => Expr::Int(n),
+            ThreadValue::Float(n) => Expr::Float(n),
+            ThreadValue::Bool(b) => Expr::Bool(b),
             ThreadValue::Str(s) => Expr::Str(s),
             ThreadValue::List(items) => {
                 Expr::List(items.into_iter().map(ThreadValue::into_expr).collect())
@@ -413,11 +419,7 @@ pub fn register_file(env: Env, heap: &mut Heap) {
                 return Err("file-exists?: expects exactly 1 argument".into());
             }
             let path = str_arg(&args[0])?;
-            Ok(Expr::Number(if std::path::Path::new(path).exists() {
-                1.0
-            } else {
-                0.0
-            }))
+            Ok(Expr::Bool(std::path::Path::new(path).exists()))
         })),
     );
 
@@ -484,7 +486,7 @@ pub fn register_os(env: Env, heap: &mut Heap) {
                 .args(["-c", cmd])
                 .status()
                 .map_err(|e| format!("shell-status: {}", e))?;
-            Ok(Expr::Number(status.code().unwrap_or(-1) as f64))
+            Ok(Expr::Int(status.code().unwrap_or(-1) as i64))
         })),
     );
 }

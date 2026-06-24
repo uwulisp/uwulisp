@@ -106,7 +106,9 @@ fn expand_all(expr: &Expr, env: crate::expr::Env, heap: &mut Heap) -> Result<Exp
         Expr::CubicalTerm(_) => Err("uncompilable: CubicalTerm".into()),
 
         // Atoms — nothing to expand.
-        Expr::Number(_) | Expr::Str(_) | Expr::Symbol(_) => Ok(expr.clone()),
+        Expr::Int(_) | Expr::Float(_) | Expr::Bool(_) | Expr::Str(_) | Expr::Symbol(_) => {
+            Ok(expr.clone())
+        }
 
         // Func / Lambda / Macro are runtime values; they shouldn't appear as
         // raw AST nodes in the source being compiled, but handle gracefully.
@@ -185,8 +187,16 @@ fn compile_expr(
         Expr::CubicalTerm(_) => Err("uncompilable: CubicalTerm".into()),
 
         // ── self-evaluating atoms ─────────────────────────────────────────────
-        Expr::Number(n) => {
-            chunk.emit(Op::LoadConst(Value::Number(*n)));
+        Expr::Int(n) => {
+            chunk.emit(Op::LoadConst(Value::Int(*n)));
+            Ok(())
+        }
+        Expr::Float(n) => {
+            chunk.emit(Op::LoadConst(Value::Float(*n)));
+            Ok(())
+        }
+        Expr::Bool(b) => {
+            chunk.emit(Op::LoadConst(Value::Bool(*b)));
             Ok(())
         }
         Expr::Str(s) => {
@@ -604,8 +614,8 @@ fn compile_for(
     };
 
     let numeric_literals = list.len() >= 5
-        && matches!(&list[2], Expr::Number(_))
-        && matches!(&list[3], Expr::Number(_));
+        && matches!(&list[2], Expr::Int(_))
+        && matches!(&list[3], Expr::Int(_));
 
     if list.len() >= 5 && !numeric_literals {
         chunk.emit(Op::TreeEval(Expr::List(list.to_vec())));
@@ -668,7 +678,7 @@ fn compile_for_numeric(
         &[
             Expr::Symbol("+".into()),
             Expr::Symbol(var.into()),
-            Expr::Number(1.0),
+            Expr::Int(1),
         ],
         chunk,
         heap,
@@ -1042,7 +1052,7 @@ fn is_compilable_rec(expr: &Expr, qq_depth: usize, heap: &Heap, env: GcHandle) -
         return false;
     }
     match expr {
-        Expr::Number(_) => true,
+        Expr::Int(_) | Expr::Float(_) | Expr::Bool(_) => true,
         Expr::Str(_) => true,
         Expr::Symbol(s) => {
             if qq_depth == 0 {

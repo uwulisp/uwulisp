@@ -140,7 +140,7 @@ pub fn apply(
 /// either a finished value or a tail-call descriptor.
 fn eval_step(expr: &Expr, env: Env, heap: &mut Heap) -> Result<Step, String> {
     match expr {
-        Expr::Number(_) => Ok(Step::Value(expr.clone())),
+        Expr::Int(_) | Expr::Float(_) | Expr::Bool(_) => Ok(Step::Value(expr.clone())),
         Expr::Str(_) => Ok(Step::Value(expr.clone())),
         // CubicalTerm values are opaque atoms — they self-evaluate just like
         // numbers and are only inspected by the cubical builtins.
@@ -553,15 +553,15 @@ fn eval_for(list: &[Expr], env: Env, heap: &mut Heap) -> Result<Step, String> {
     let numeric = if list.len() >= 5 {
         let start = eval(&list[2], env, heap)?;
         let end = eval(&list[3], env, heap)?;
-        if let (Expr::Number(start_n), Expr::Number(end_n)) = (start, end) {
+        if let (Expr::Int(start_n), Expr::Int(end_n)) = (start, end) {
             let body = &list[4..];
             let mut i = start_n;
             while i < end_n {
-                env_set(heap, loop_env, var_name.clone(), Expr::Number(i));
+                env_set(heap, loop_env, var_name.clone(), Expr::Int(i));
                 for e in body {
                     eval(e, loop_env, heap)?;
                 }
-                i += 1.0;
+                i += 1;
             }
             true
         } else {

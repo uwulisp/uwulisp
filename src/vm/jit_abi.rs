@@ -88,7 +88,7 @@ impl JitFrame {
         }
 
         match self.result_tag {
-            0 => Ok(VmValue::Number(f64::from_bits(self.result_val))),
+            0 => Ok(VmValue::Float(f64::from_bits(self.result_val))),
             1 => Ok(VmValue::Nil),
             // For strings, lists etc., we might retrieve them from a global or the helper would
             // have placed them somewhere. Phase 1 only returns Number/Nil directly.
@@ -104,9 +104,17 @@ impl JitFrame {
         let idx = self.stack_len;
         unsafe {
             match val {
-                VmValue::Number(n) => {
-                    *self.tag_ptr.add(idx) = 0; // JitTag::Number
+                VmValue::Int(n) => {
+                    *self.tag_ptr.add(idx) = 0;
+                    *self.stack_ptr.add(idx) = (n as f64).to_bits();
+                }
+                VmValue::Float(n) => {
+                    *self.tag_ptr.add(idx) = 0;
                     *self.stack_ptr.add(idx) = n.to_bits();
+                }
+                VmValue::Bool(b) => {
+                    *self.tag_ptr.add(idx) = 0;
+                    *self.stack_ptr.add(idx) = f64::to_bits(if b { 1.0 } else { 0.0 });
                 }
                 VmValue::Nil => {
                     *self.tag_ptr.add(idx) = 1; // JitTag::Nil
@@ -115,7 +123,6 @@ impl JitFrame {
                 other => {
                     *self.tag_ptr.add(idx) = 2; // Object
                     *self.stack_ptr.add(idx) = 0;
-                    // Move the VmValue into our parallel array
                     std::ptr::write(self.val_ptr.add(idx), other);
                 }
             }
@@ -134,7 +141,7 @@ impl JitFrame {
             let tag = *self.tag_ptr.add(idx);
             let val = *self.stack_ptr.add(idx);
             if tag == 0 {
-                Ok(VmValue::Number(f64::from_bits(val)))
+                Ok(VmValue::Float(f64::from_bits(val)))
             } else if tag == 1 {
                 Ok(VmValue::Nil)
             } else {
@@ -160,9 +167,15 @@ pub unsafe extern "C" fn jit_helper_load_var(
     match vm.heap_mut().env_get(frame.env, name) {
         Ok(expr) => match crate::vm::machine::expr_to_vm_value(&expr, vm.heap_mut()) {
             Ok(val) => frame.push_val(val),
-            Err(_) => frame.error = "JIT LoadVar expr error\0".as_ptr(),
+            Err(_) => {
+                frame.error = "JIT LoadVar expr error\0".as_ptr();
+                frame.push_val(crate::vm::machine::VmValue::Nil);
+            }
         },
-        Err(_) => frame.error = "JIT LoadVar undefined variable\0".as_ptr(),
+        Err(_) => {
+            frame.error = "JIT LoadVar undefined variable\0".as_ptr();
+            frame.push_val(crate::vm::machine::VmValue::Nil);
+        },
     }
 }
 

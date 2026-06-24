@@ -69,14 +69,43 @@ impl JitCompiler {
             asm.add_instruction(Instruction::Label(format!("op_{}", i)));
 
             match op {
-                Op::LoadConst(Value::Number(n)) => {
+                Op::LoadConst(Value::Int(n)) => {
+                    let bits = (*n as f64).to_bits();
+                    asm.add_instruction(Instruction::Mov(
+                        Operand::Reg(Register::RAX),
+                        Operand::Imm64(bits),
+                    ));
+
+                    asm.add_instruction(Instruction::Mov(
+                        Operand::Mem(MemoryAddr {
+                            base: Some(Register::R13),
+                            index: Some(Register::R12),
+                            scale: 8,
+                            disp: 0,
+                        }),
+                        Operand::Imm32(0),
+                    ));
+                    asm.add_instruction(Instruction::Mov(
+                        Operand::Mem(MemoryAddr {
+                            base: Some(Register::RBX),
+                            index: Some(Register::R12),
+                            scale: 8,
+                            disp: 0,
+                        }),
+                        Operand::Reg(Register::RAX),
+                    ));
+                    asm.add_instruction(Instruction::Add(
+                        Operand::Reg(Register::R12),
+                        Operand::Imm32(1),
+                    ));
+                }
+                Op::LoadConst(Value::Float(n)) => {
                     let bits = n.to_bits();
                     asm.add_instruction(Instruction::Mov(
                         Operand::Reg(Register::RAX),
                         Operand::Imm64(bits),
                     ));
 
-                    // tag_ptr[r12*8] = 0 (Number)
                     asm.add_instruction(Instruction::Mov(
                         Operand::Mem(MemoryAddr {
                             base: Some(Register::R13),
@@ -97,6 +126,36 @@ impl JitCompiler {
                         Operand::Reg(Register::RAX),
                     ));
 
+                    asm.add_instruction(Instruction::Add(
+                        Operand::Reg(Register::R12),
+                        Operand::Imm32(1),
+                    ));
+                }
+                Op::LoadConst(Value::Bool(b)) => {
+                    let val: f64 = if *b { 1.0 } else { 0.0 };
+                    let bits = val.to_bits();
+                    asm.add_instruction(Instruction::Mov(
+                        Operand::Reg(Register::RAX),
+                        Operand::Imm64(bits),
+                    ));
+                    asm.add_instruction(Instruction::Mov(
+                        Operand::Mem(MemoryAddr {
+                            base: Some(Register::R13),
+                            index: Some(Register::R12),
+                            scale: 8,
+                            disp: 0,
+                        }),
+                        Operand::Imm32(0),
+                    ));
+                    asm.add_instruction(Instruction::Mov(
+                        Operand::Mem(MemoryAddr {
+                            base: Some(Register::RBX),
+                            index: Some(Register::R12),
+                            scale: 8,
+                            disp: 0,
+                        }),
+                        Operand::Reg(Register::RAX),
+                    ));
                     asm.add_instruction(Instruction::Add(
                         Operand::Reg(Register::R12),
                         Operand::Imm32(1),

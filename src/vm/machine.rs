@@ -80,7 +80,9 @@ use crate::vm::bytecode::{Chunk, Op, Value, expr_to_value, value_to_expr};
 /// interpreter boundary.
 #[derive(Clone)]
 pub(crate) enum VmValue {
-    Number(f64),
+    Int(i64),
+    Float(f64),
+    Bool(bool),
     Str(String),
     Symbol(String),
     List(Vec<VmValue>),
@@ -99,7 +101,9 @@ pub(crate) enum VmValue {
 impl std::fmt::Debug for VmValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            VmValue::Number(n) => write!(f, "{}", n),
+            VmValue::Int(n) => write!(f, "{}", n),
+            VmValue::Float(n) => write!(f, "{}", n),
+            VmValue::Bool(b) => write!(f, "{}", if *b { "#t" } else { "#f" }),
             VmValue::Str(s) => write!(f, "{:?}", s),
             VmValue::Symbol(s) => write!(f, "{}", s),
             VmValue::List(items) => {
@@ -122,7 +126,9 @@ impl std::fmt::Debug for VmValue {
 /// Convert a phase-1 `Value` to a `VmValue` (always succeeds).
 fn from_value(v: Value) -> VmValue {
     match v {
-        Value::Number(n) => VmValue::Number(n),
+        Value::Int(n) => VmValue::Int(n),
+        Value::Float(n) => VmValue::Float(n),
+        Value::Bool(b) => VmValue::Bool(b),
         Value::Str(s) => VmValue::Str(s),
         Value::Symbol(s) => VmValue::Symbol(s),
         Value::List(items) => VmValue::List(items.into_iter().map(from_value).collect()),
@@ -145,7 +151,9 @@ fn from_value(v: Value) -> VmValue {
 /// Convert a `VmValue` back to a phase-1 `Value` (lossy: Builtin/Closure → Err).
 fn into_value(v: VmValue) -> Result<Value, String> {
     match v {
-        VmValue::Number(n) => Ok(Value::Number(n)),
+        VmValue::Int(n) => Ok(Value::Int(n)),
+        VmValue::Float(n) => Ok(Value::Float(n)),
+        VmValue::Bool(b) => Ok(Value::Bool(b)),
         VmValue::Str(s) => Ok(Value::Str(s)),
         VmValue::Symbol(s) => Ok(Value::Symbol(s)),
         VmValue::List(items) => {
@@ -188,7 +196,9 @@ pub(crate) fn vm_value_to_expr(v: VmValue, _heap: &mut Heap) -> Result<Expr, Str
 /// Convert an `Expr` to a `VmValue`, bridging built-in and lambda values.
 pub(crate) fn expr_to_vm_value(expr: &Expr, heap: &mut Heap) -> Result<VmValue, String> {
     match expr {
-        Expr::Number(n) => Ok(VmValue::Number(*n)),
+        Expr::Int(n) => Ok(VmValue::Int(*n)),
+        Expr::Float(n) => Ok(VmValue::Float(*n)),
+        Expr::Bool(b) => Ok(VmValue::Bool(*b)),
         Expr::Str(s) => Ok(VmValue::Str(s.clone())),
         Expr::Symbol(s) => Ok(VmValue::Symbol(s.clone())),
         Expr::List(items) => {
@@ -236,8 +246,10 @@ pub(crate) fn expr_to_vm_value(expr: &Expr, heap: &mut Heap) -> Result<VmValue, 
 
 fn is_truthy(v: &VmValue) -> bool {
     match v {
+        VmValue::Bool(b) => *b,
+        VmValue::Int(n) => *n != 0,
+        VmValue::Float(n) => *n != 0.0,
         VmValue::Nil => false,
-        VmValue::Number(n) => *n != 0.0,
         VmValue::Str(s) => !s.is_empty(),
         VmValue::List(l) => !l.is_empty(),
         _ => true,

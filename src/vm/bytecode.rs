@@ -50,8 +50,9 @@ static CHUNK_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 /// containing one before producing a `Value`.
 #[derive(Clone)]
 pub enum Value {
-    /// A floating-point number (same as `Expr::Number`).
-    Number(f64),
+    Int(i64),
+    Float(f64),
+    Bool(bool),
     /// A string literal.
     Str(String),
     /// A symbol / identifier.  Used for quoted symbols and as the string form
@@ -76,7 +77,9 @@ pub enum Value {
 impl std::fmt::Debug for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Value::Number(n) => write!(f, "Number({})", n),
+            Value::Int(n) => write!(f, "Int({})", n),
+            Value::Float(n) => write!(f, "Float({})", n),
+            Value::Bool(b) => write!(f, "Bool({})", b),
             Value::Str(s) => write!(f, "Str({:?})", s),
             Value::Symbol(s) => write!(f, "Symbol({})", s),
             Value::List(items) => write!(f, "List({:?})", items),
@@ -90,7 +93,9 @@ impl std::fmt::Debug for Value {
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Value::Number(a), Value::Number(b)) => a == b,
+            (Value::Int(a), Value::Int(b)) => a == b,
+            (Value::Float(a), Value::Float(b)) => a == b,
+            (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Str(a), Value::Str(b)) => a == b,
             (Value::Symbol(a), Value::Symbol(b)) => a == b,
             (Value::List(a), Value::List(b)) => a == b,
@@ -124,7 +129,9 @@ impl PartialEq for Value {
 /// `Expr::CubicalTerm`.
 pub fn expr_to_value(expr: &Expr) -> Result<Value, String> {
     match expr {
-        Expr::Number(n) => Ok(Value::Number(*n)),
+        Expr::Int(n) => Ok(Value::Int(*n)),
+        Expr::Float(n) => Ok(Value::Float(*n)),
+        Expr::Bool(b) => Ok(Value::Bool(*b)),
         Expr::Str(s) => Ok(Value::Str(s.clone())),
         Expr::Symbol(s) => Ok(Value::Symbol(s.clone())),
         Expr::List(items) => {
@@ -153,7 +160,9 @@ pub fn expr_to_value(expr: &Expr) -> Result<Value, String> {
 /// This is always total — every `Value` variant has an `Expr` counterpart.
 pub fn value_to_expr(val: Value) -> Expr {
     match val {
-        Value::Number(n) => Expr::Number(n),
+        Value::Int(n) => Expr::Int(n),
+        Value::Float(n) => Expr::Float(n),
+        Value::Bool(b) => Expr::Bool(b),
         Value::Str(s) => Expr::Str(s),
         Value::Symbol(s) => Expr::Symbol(s),
         Value::List(items) => Expr::List(items.into_iter().map(value_to_expr).collect()),

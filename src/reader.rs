@@ -160,8 +160,14 @@ pub fn parse(tokens: &[Token], pos: &mut usize) -> Result<Expr, String> {
         }
         Token::Str(s) => Ok(Expr::Str(s)),
         Token::Atom(s) => {
-            if let Ok(n) = s.parse::<f64>() {
-                Ok(Expr::Number(n))
+            if s == "#t" {
+                Ok(Expr::Bool(true))
+            } else if s == "#f" {
+                Ok(Expr::Bool(false))
+            } else if let Ok(n) = s.parse::<i64>() {
+                Ok(Expr::Int(n))
+            } else if let Ok(n) = s.parse::<f64>() {
+                Ok(Expr::Float(n))
             } else {
                 Ok(Expr::Symbol(s))
             }

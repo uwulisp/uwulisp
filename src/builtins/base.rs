@@ -13,10 +13,13 @@ pub fn register_arithmetic(env: Env, heap: &mut Heap) {
         "+".into(),
         Expr::Func(Rc::new(|args, _heap| {
             let mut sum = 0.0;
+            let mut any_float = false;
             for a in args {
-                sum += num(a)?;
+                let n = num(a)?;
+                any_float = any_float || matches!(a, Expr::Float(_));
+                sum += n;
             }
-            Ok(Expr::Number(sum))
+            if any_float { Ok(Expr::Float(sum)) } else { Ok(Expr::Int(sum as i64)) }
         })),
     );
 
@@ -29,14 +32,19 @@ pub fn register_arithmetic(env: Env, heap: &mut Heap) {
                 return Err("-: need at least 1 argument".into());
             }
             if args.len() == 1 {
-                return Ok(Expr::Number(-num(&args[0])?));
+                let n = num(&args[0])?;
+                let any_float = matches!(args[0], Expr::Float(_));
+                return if any_float { Ok(Expr::Float(-n)) } else { Ok(Expr::Int(-(n as i64))) };
             }
             let mut it = args.iter();
-            let mut acc = num(it.next().unwrap())?;
+            let first = it.next().unwrap();
+            let mut any_float = matches!(first, Expr::Float(_));
+            let mut acc = num(first)?;
             for a in it {
+                any_float = any_float || matches!(a, Expr::Float(_));
                 acc -= num(a)?;
             }
-            Ok(Expr::Number(acc))
+            if any_float { Ok(Expr::Float(acc)) } else { Ok(Expr::Int(acc as i64)) }
         })),
     );
 
@@ -46,10 +54,13 @@ pub fn register_arithmetic(env: Env, heap: &mut Heap) {
         "*".into(),
         Expr::Func(Rc::new(|args, _heap| {
             let mut prod = 1.0;
+            let mut any_float = false;
             for a in args {
-                prod *= num(a)?;
+                let n = num(a)?;
+                any_float = any_float || matches!(a, Expr::Float(_));
+                prod *= n;
             }
-            Ok(Expr::Number(prod))
+            if any_float { Ok(Expr::Float(prod)) } else { Ok(Expr::Int(prod as i64)) }
         })),
     );
 
@@ -70,7 +81,7 @@ pub fn register_arithmetic(env: Env, heap: &mut Heap) {
                 }
                 acc /= d;
             }
-            Ok(Expr::Number(acc))
+            Ok(Expr::Float(acc))
         })),
     );
 
@@ -82,12 +93,18 @@ pub fn register_arithmetic(env: Env, heap: &mut Heap) {
             if args.len() != 2 {
                 return Err("%: expects exactly 2 arguments".into());
             }
-            let a = num(&args[0])?;
-            let b = num(&args[1])?;
-            if b == 0.0 {
+            let a = match &args[0] {
+                Expr::Int(n) => *n,
+                _ => return Err("%: arguments must be integers".into()),
+            };
+            let b = match &args[1] {
+                Expr::Int(n) => *n,
+                _ => return Err("%: arguments must be integers".into()),
+            };
+            if b == 0 {
                 return Err("%: division by zero".into());
             }
-            Ok(Expr::Number(a % b))
+            Ok(Expr::Int(a % b))
         })),
     );
 }
@@ -103,7 +120,7 @@ pub fn register_comparisons(env: Env, heap: &mut Heap) {
                 }
                 let a = num(&args[0])?;
                 let b = num(&args[1])?;
-                Ok(Expr::Number(if a $op b { 1.0 } else { 0.0 }))
+                Ok(Expr::Bool(a $op b))
             }))
         };
     }
@@ -122,7 +139,7 @@ pub fn register_comparisons(env: Env, heap: &mut Heap) {
             if args.len() != 1 {
                 return Err("not: expects exactly 1 argument".into());
             }
-            Ok(Expr::Number(if is_truthy(&args[0]) { 0.0 } else { 1.0 }))
+            Ok(Expr::Bool(!is_truthy(&args[0])))
         })),
     );
 }
@@ -186,8 +203,8 @@ pub fn register_lists(env: Env, heap: &mut Heap) {
         env,
         "null?".into(),
         Expr::Func(Rc::new(|args, _heap| match &args[0] {
-            Expr::List(l) => Ok(Expr::Number(if l.is_empty() { 1.0 } else { 0.0 })),
-            _ => Ok(Expr::Number(0.0)),
+            Expr::List(l) => Ok(Expr::Bool(l.is_empty())),
+            _ => Ok(Expr::Bool(false)),
         })),
     );
 }

@@ -486,7 +486,9 @@ fn collect_lambda_envs(root: &Expr, out: &mut Vec<GcHandle>) {
                 stack.extend(items.iter());
             }
             Expr::Symbol(_)
-            | Expr::Number(_)
+            | Expr::Int(_)
+            | Expr::Float(_)
+            | Expr::Bool(_)
             | Expr::Str(_)
             | Expr::Func(_)
             | Expr::CubicalTerm(_) => {}

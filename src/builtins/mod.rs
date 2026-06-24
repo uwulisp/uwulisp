@@ -1,18 +1,22 @@
 #[cfg(all(feature = "jit", target_arch = "x86_64"))]
 mod asm;
 mod base;
-mod cubical;
 mod network;
 mod utils;
 
-use crate::env::{Env, new_env};
+use std::rc::Rc;
+
+use crate::cubical;
+use crate::env::{Env, new_env, env_set};
 use crate::expr::Expr;
 use crate::gc::Heap;
 
 /// Extracts a number from an Expr, or errors with context.
 pub(crate) fn num(e: &Expr) -> Result<f64, String> {
     match e {
-        Expr::Number(n) => Ok(*n),
+        Expr::Int(n) => Ok(*n as f64),
+        Expr::Float(n) => Ok(*n),
+        Expr::Bool(b) => Ok(if *b { 1.0 } else { 0.0 }),
         other => Err(format!("expected number, got {:?}", other)),
     }
 }
@@ -58,8 +62,7 @@ pub fn global_env(heap: &mut Heap) -> Env {
     utils::register_file(env, heap);
     utils::register_io(env, heap);
     utils::register_os(env, heap);
-    cubical::register_cubical(env, heap);
-    cubical::register_load_cubical(env, heap);
+    register_load_ctt(env, heap);
     network::register_network(env, heap);
     #[cfg(all(feature = "jit", target_arch = "x86_64"))]
     asm::register_assembler(env, heap);
@@ -69,4 +72,56 @@ pub fn global_env(heap: &mut Heap) -> Env {
     asm::register_load_asm_parallel(env, heap);
 
     env
+}
+
+fn register_load_ctt(env: Env, heap: &mut Heap) {
+    env_set(
+        heap,
+        env,
+        "ctt-load".into(),
+        Expr::Func(Rc::new(|args, _heap| {
+            if args.len() != 1 {
+                return Err(format!("ctt-load: expected 1 argument, got {}", args.len()));
+            }
+            let filename = match &args[0] {
+                Expr::Str(s) => s.clone(),
+                Expr::Symbol(s) => s.clone(),
+                other => {
+                    return Err(format!(
+                        "ctt-load: filename must be a string or symbol, got {:?}",
+                        other
+                    ));
+                }
+            };
+            let output = cubical::run(&filename).map_err(|e| e.to_string())?;
+            Ok(Expr::List(vec![
+                Expr::Str(output.name),
+                Expr::CubicalTerm(Box::new(output.ty)),
+                Expr::CubicalTerm(Box::new(output.value)),
+            ]))
+        })),
+    );
+
+    env_set(
+        heap,
+        env,
+        "eval-pic".into(),
+        Expr::Func(Rc::new(|args, _heap| {
+            if args.len() != 1 {
+                return Err(format!("eval-pic: expected 1 argument, got {}", args.len()));
+            }
+            let source = match &args[0] {
+                Expr::Str(s) => s.clone(),
+                other => return Err(format!(
+                    "eval-pic: argument must be a string, got {:?}", other
+                )),
+            };
+            let output = cubical::run_str(&source).map_err(|e| e.to_string())?;
+            Ok(Expr::List(vec![
+                Expr::Str(output.name),
+                Expr::CubicalTerm(Box::new(output.ty)),
+                Expr::CubicalTerm(Box::new(output.value)),
+            ]))
+        })),
+    );
 }

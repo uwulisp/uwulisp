@@ -22,7 +22,15 @@ fn str_arg<'a>(expr: &'a Expr, fn_name: &str) -> Result<&'a str, String> {
 /// Pull an `f64` that represents a port number (1-65535).
 fn port_arg(expr: &Expr, fn_name: &str) -> Result<u16, String> {
     match expr {
-        Expr::Number(n) => {
+        Expr::Int(n) => {
+            let p = *n as u64;
+            if p == 0 || p > 65535 {
+                Err(format!("{}: port must be 1-65535, got {}", fn_name, p))
+            } else {
+                Ok(p as u16)
+            }
+        }
+        Expr::Float(n) => {
             let p = *n as u64;
             if p == 0 || p > 65535 {
                 Err(format!("{}: port must be 1-65535, got {}", fn_name, p))
@@ -191,7 +199,7 @@ fn register_tcp(env: Env, heap: &mut Heap) {
                 .write(message.as_bytes())
                 .map_err(|e| format!("tcp-send: write failed: {}", e))?;
 
-            Ok(Expr::Number(n as f64))
+            Ok(Expr::Int(n as i64))
         })),
     );
 }
@@ -278,7 +286,7 @@ fn register_http(env: Env, heap: &mut Heap) {
             let code: f64 = code_str
                 .parse()
                 .map_err(|_| format!("http-status: non-numeric status code: {:?}", code_str))?;
-            Ok(Expr::Number(code))
+            Ok(Expr::Int(code as i64))
         })),
     );
 

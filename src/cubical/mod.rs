@@ -27,6 +27,19 @@ pub struct RunOutput {
     pub name: Name,
     pub ty: Term,
     pub value: Term,
+    pub global_names: Vec<Name>,
+}
+
+impl fmt::Display for RunOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} : {} = {}",
+            self.name,
+            syntax::show_term(&self.global_names, &self.ty),
+            syntax::show_term(&self.global_names, &self.value),
+        )
+    }
 }
 
 #[derive(Debug)]
@@ -74,11 +87,18 @@ impl From<TypeError> for RunError {
 ///
 /// Top-level declarations are processed in order. Datatypes are registered in
 /// the environment, definitions are checked against their annotations, and the
-/// most recent definition is normalized and returned as the program result.
+/// `main` definition (or the last definition if no `main` exists) is normalized
+/// and returned as the program result.
 pub fn run(path: impl AsRef<Path>) -> Result<RunOutput, RunError> {
     let path = path.as_ref();
     let source = std::fs::read_to_string(path)?;
     run_source(path, &source)
+}
+
+/// Typecheck and evaluate cubical source from a string, using the current
+/// directory for import resolution.
+pub fn run_str(source: &str) -> Result<RunOutput, RunError> {
+    run_source(Path::new("."), source)
 }
 
 fn run_source(root_path: &Path, source: &str) -> Result<RunOutput, RunError> {
@@ -96,7 +116,18 @@ fn run_source(root_path: &Path, source: &str) -> Result<RunOutput, RunError> {
         &mut last_def,
     )?;
 
-    last_def.ok_or(RunError::NoEntryPoint)
+    // Prefer `main` over the last definition when both exist.
+    if let Some(main_entry) = env.defs.iter().find(|(name, _, _)| name == "main") {
+        let (name, ty, val) = main_entry;
+        Ok(RunOutput {
+            name: name.clone(),
+            ty: ty.clone(),
+            value: nbe_eval(val),
+            global_names: env.defs.iter().map(|(n, _, _)| n.clone()).collect(),
+        })
+    } else {
+        last_def.ok_or(RunError::NoEntryPoint)
+    }
 }
 
 fn resolve_import_path(base: &Path, path: &str) -> PathBuf {
@@ -182,7 +213,7 @@ fn process_data(dt: &crate::cubical::syntax::Datatype, env: &mut Env) -> Result<
 }
 
 fn process_def(name: &Name, ty: &Term, val: &Term, env: &mut Env) -> Result<RunOutput, RunError> {
-    println!("Checking definition: {}", name);
+    println!("{}: ✓", name);
     let closed_ty_globals = apply_globals(&env.defs, ty);
     let closed_val = val.clone();
 
@@ -200,6 +231,7 @@ fn process_def(name: &Name, ty: &Term, val: &Term, env: &mut Env) -> Result<RunO
         name: name.clone(),
         ty: closed_ty_globals.clone(),
         value: nbe_eval(&closed_val),
+        global_names: env.defs.iter().map(|(n, _, _)| n.clone()).collect(),
     };
 
     Ok(output)
