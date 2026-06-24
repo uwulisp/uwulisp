@@ -15,11 +15,11 @@ pub mod cache;
 pub mod compiler;
 pub mod machine;
 
-#[cfg(all(feature = "jit", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 pub mod jit_abi;
-#[cfg(all(feature = "jit", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 pub mod jit_cache;
-#[cfg(all(feature = "jit", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 pub mod jit_compiler;
 
 use std::cell::RefCell;
@@ -44,7 +44,7 @@ thread_local! {
     static CACHE: RefCell<CompileCache> = RefCell::new(CompileCache::new());
 }
 
-#[cfg(all(feature = "jit", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 thread_local! {
     pub(crate) static JIT_CACHE: RefCell<jit_cache::JitCache> = RefCell::new(jit_cache::JitCache::new());
 }

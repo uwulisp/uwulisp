@@ -3,7 +3,7 @@ use std::ptr;
 
 /// Tracks whether the JIT region is currently writable or executable.
 /// Upholds the W^X invariant at the type level by gating APIs on state.
-#[cfg(all(feature = "jit", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Protection {
     /// `PROT_READ | PROT_WRITE` — code may be written, not executed.
@@ -29,7 +29,7 @@ enum Protection {
 /// cache (I$), so no explicit cache flush is needed after writing code.
 /// On architectures with separate I$ (AArch64, RISC-V) you would need to call
 /// `__clear_cache` or equivalent before executing newly written code.
-#[cfg(all(feature = "jit", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 pub struct JitMemory {
     addr: *mut u8,
     /// Actual allocated size (rounded up to a page boundary).
@@ -53,10 +53,10 @@ pub struct JitMemory {
 // `Sync` is not implemented: the `PhantomData<*mut ()>` field makes the
 // compiler infer `!Sync`, preventing shared `&JitMemory` references across
 // threads (which would allow data races on `state` and the mmap region).
-#[cfg(all(feature = "jit", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 unsafe impl Send for JitMemory {}
 
-#[cfg(all(feature = "jit", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 impl JitMemory {
     /// Allocate at least `min_size` bytes of anonymous, private, read-write
     /// memory, rounded up to the system page size.
@@ -208,7 +208,7 @@ impl JitMemory {
     }
 }
 
-#[cfg(all(feature = "jit", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 impl Drop for JitMemory {
     fn drop(&mut self) {
         unsafe {

@@ -1,6 +1,7 @@
-#[cfg(all(feature = "jit", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 mod asm;
 mod base;
+mod cffi;
 mod network;
 mod utils;
 
@@ -63,12 +64,13 @@ pub fn global_env(heap: &mut Heap) -> Env {
     utils::register_io(env, heap);
     utils::register_os(env, heap);
     register_load_ctt(env, heap);
+    cffi::register_ffi(env, heap);
     network::register_network(env, heap);
-    #[cfg(all(feature = "jit", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     asm::register_assembler(env, heap);
-    #[cfg(all(feature = "jit", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     asm::register_load_asm(env, heap);
-    #[cfg(all(feature = "jit", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     asm::register_load_asm_parallel(env, heap);
 
     env

@@ -205,11 +205,8 @@ fn main() {
                 let base = path.parent();
                 with_import_base(base, || run(&src, global_env, &mut heap));
 
-                #[cfg(feature = "vm")]
-                {
-                    let (chunks, compilable) = crate::vm::cache_stats();
-                    eprintln!("[cache] chunks={} compilable={}", chunks, compilable);
-                }
+                let (chunks, compilable) = crate::vm::cache_stats();
+                eprintln!("[cache] chunks={} compilable={}", chunks, compilable);
             }
             i += 1;
         }
