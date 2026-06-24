@@ -1,4 +1,4 @@
-//! Bytecode representation for the uwulisp VM (phase 1: data structures only).
+//! Bytecode representation for the pilisp VM (phase 1: data structures only).
 //!
 //! # Design notes
 //!

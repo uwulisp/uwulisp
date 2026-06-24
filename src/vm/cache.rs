@@ -1,4 +1,4 @@
-//! Compile cache for the uwulisp VM.
+//! Compile cache for the pilisp VM.
 //!
 //! # Overview
 //!

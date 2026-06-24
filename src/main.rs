@@ -39,11 +39,11 @@ fn run(src: &str, global_env: GcHandle, heap: &mut Heap) {
 }
 
 fn repl(global_env: GcHandle, heap: &mut Heap) {
-    println!("uwulisp REPL — Ctrl+D to exit");
+    println!("pilisp REPL — Ctrl+D to exit");
     let mut input = String::new();
 
     loop {
-        let prompt = if input.is_empty() { "uwu> " } else { "...  " };
+        let prompt = if input.is_empty() { "π> " } else { "...  " };
         print!("{}", prompt);
         io::stdout().flush().unwrap();
 

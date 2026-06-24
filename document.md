@@ -164,7 +164,7 @@ Macros differ from lambdas in two ways: arguments are not pre-evaluated, and mac
 
 **Rule:** `(import "path")`
 
-Reads another uwulisp source file and evaluates each top-level form in the current environment. Definitions, macros, and other side effects from the imported file are therefore visible after the import. The form returns the last value produced by the imported file, or `()` if the file is empty.
+Reads another pilisp source file and evaluates each top-level form in the current environment. Definitions, macros, and other side effects from the imported file are therefore visible after the import. The form returns the last value produced by the imported file, or `()` if the file is empty.
 
 Relative paths are resolved against the directory of the file doing the import when available, so a file can import a sibling with a simple relative path.
 

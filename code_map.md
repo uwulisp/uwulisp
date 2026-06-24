@@ -1,7 +1,7 @@
-# how **uwulisp** code is executed
+# how **pilisp** code is executed
 
 ### 1. Lexical Analysis and Parsing (Frontend)
-The execution of any `uwulisp` expression begins in [src/reader.rs](/src/reader.rs).
+The execution of any `pilisp` expression begins in [src/reader.rs](/src/reader.rs).
 * **Tokenization**: The [tokenize](/src/reader.rs#L31) function scans the source code character-by-character into a stream of `Token`s (e.g., parentheses, quotes, strings, and atoms/symbols). Line comments starting with `;` and whitespaces are ignored.
 * **AST Construction**: The [parse_all](/src/reader.rs#L191) function converts these tokens into the Abstract Syntax Tree (AST) represented by the [Expr](/src/expr.rs#L26) enum. 
 * **Desugaring**: Syntactic abbreviations like `'expr`, `` `expr ``, `,expr`, and `,@expr` are automatically transformed into their standard Lisp representation: `(quote expr)`, `(quasiquote expr)`, `(unquote expr)`, and `(unquote-splicing expr)`.
@@ -9,7 +9,7 @@ The execution of any `uwulisp` expression begins in [src/reader.rs](/src/reader.
 ---
 
 ### 2. Execution Routing & AST Verification
-Once the AST is built, the main entry point is [eval](/src/eval.rs#L68) in [src/eval.rs](/src/eval.rs). If `uwulisp` is compiled with the `--features vm` compiler flag, it delegates execution to the Virtual Machine via [vm_eval](/src/vm/mod.rs#L83) in [src/vm/mod.rs](/src/vm/mod.rs). 
+Once the AST is built, the main entry point is [eval](/src/eval.rs#L68) in [src/eval.rs](/src/eval.rs). If `pilisp` is compiled with the `--features vm` compiler flag, it delegates execution to the Virtual Machine via [vm_eval](/src/vm/mod.rs#L83) in [src/vm/mod.rs](/src/vm/mod.rs). 
 
 Before compiling, the compiler runs [is_compilable](/src/vm/compiler.rs#L1008):
 1. **Tree-Walker Fallback**: If the expression contains uncompilable constructs—such as macro declarations (`defmacro`) or `CubicalTerm` instances (used in Cubical Type Theory located in [src/cubical/](/src/cubical/))—the compiler rejects it and routes execution to the **Tree-Walking Interpreter**.

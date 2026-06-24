@@ -1,4 +1,4 @@
-# uwulisp
+# pilisp
 
 A lightweight, experimental Lisp interpreter written in Rust. Beyond standard Lisp features (macros, lexical scoping, and arithmetic), this project features a unique **cubical type theory flavor**, including **Interval types, Path applications, Dependent Function types ($\Pi$-types), and Dependent Pair types ($\Sigma$-types)**.
 
@@ -9,9 +9,9 @@ Make sure you have [Rust and Cargo installed](https://www.rust-lang.org/tools/in
 ```bash
 cargo run --release
 #if you use nix
-nix run github:uwulisp/uwulisp
-nix shell github:uwulisp/uwulisp
+nix run github:pilisp/pilisp
+nix shell github:pilisp/pilisp
 ```
 
 ## document
-[document](https://uwulisp.github.io)
+[document](https://pilisp.github.io)

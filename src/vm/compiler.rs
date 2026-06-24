@@ -1,4 +1,4 @@
-//! Bytecode compiler for uwulisp (phase 1).
+//! Bytecode compiler for pilisp (phase 1).
 //!
 //! Translates a fully macro-expanded `Expr` AST into a `Chunk` of `Op`
 //! instructions, ready for the phase-2 VM to execute.

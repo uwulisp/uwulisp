@@ -3,7 +3,7 @@
 }:
 
 pkgs.rustPlatform.buildRustPackage rec {
-  pname = "uwulisp";
+  pname = "pilisp";
   version = "1.7.4";
 
   # The source directory of the project
@@ -26,7 +26,7 @@ pkgs.rustPlatform.buildRustPackage rec {
   meta = with pkgs.lib; {
     description = "An experimental Lisp interpreter written in Rust";
     license = licenses.asl20;
-    mainProgram = "uwulisp";
+    mainProgram = "pilisp";
     platforms = platforms.all;
   };
 }

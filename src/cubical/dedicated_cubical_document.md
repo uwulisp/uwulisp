@@ -435,7 +435,7 @@ atom     ::= ident | '0' | '1' | '(' term ')'
 The `transpile` module (`transpile.rs`) converts `.uwuc` files to type-erased Python via:
 
 ```
-uwulisp --cubical-transpile <file.uwuc> [-o <output-dir>]
+pilisp --cubical-transpile <file.uwuc> [-o <output-dir>]
 ```
 
 The transpiler is self-contained in `src/cubical` — no external runtime or prelude is needed. To run the output, the root `.uwuc` file must explicitly define `def main : <showable-type> = ...`. The transpiler then emits `main.py` that calls `module.main` (filling in Pi arguments with demo values such as `nat.Suc(nat.Suc(nat.Zero))` for `Nat`). If no `main` definition exists, no `main.py` is generated.

@@ -1,4 +1,4 @@
-//! Stack-based VM execution engine for uwulisp (phase 2).
+//! Stack-based VM execution engine for pilisp (phase 2).
 //!
 //! # Architecture overview
 //!

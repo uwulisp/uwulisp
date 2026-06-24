@@ -331,7 +331,7 @@ fn eval_defmacro(list: &[Expr], env: Env, heap: &mut Heap) -> Result<Expr, Strin
 
 /// `(import "path")`
 ///
-/// Reads another uwulisp source file, evaluates each top-level form in the
+/// Reads another pilisp source file, evaluates each top-level form in the
 /// current environment, and returns the last result. Relative imports are
 /// resolved against the importing file's directory when available.
 fn eval_import(list: &[Expr], env: Env, heap: &mut Heap) -> Result<Expr, String> {
