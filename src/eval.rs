@@ -66,16 +66,7 @@ enum Step {
 /// statically know whether an arbitrary call expression is in tail position
 /// with respect to the *current* lambda's stack frame.
 pub fn eval(expr: &Expr, env: Env, heap: &mut Heap) -> Result<Expr, String> {
-    // When compiled with `--features vm`, delegate to the bytecode VM.
-    // The VM falls back to the tree-walker for uncompilable expressions
-    // (e.g. those containing CubicalTerm), so behaviour is always correct.
-    #[cfg(feature = "vm")]
-    #[allow(unreachable_code)]
-    {
-        return crate::vm::vm_eval(expr, env, heap);
-    }
-
-    eval_tree(expr, env, heap)
+    crate::vm::vm_eval(expr, env, heap)
 }
 
 /// Perform plain tree-walking evaluation, bypassing the VM check.

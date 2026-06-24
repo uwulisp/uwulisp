@@ -7,7 +7,8 @@ pkgs.mkShell {
     rustfmt
     clippy
     rust-analyzer
-    ghc
+    python3
+    gcc
   ];
 
   # 필요한 경우 환경 변수 설정
