@@ -943,32 +943,60 @@ pub fn infer_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Term, TypeError
                 .iter()
                 .find(|dt| &dt.name == d)
                 .ok_or_else(|| TypeError::UnknownDatatype(d.clone()))?;
-            let sig = dt
-                .find_con(c)
-                .ok_or_else(|| TypeError::UnknownConstructor(d.clone(), c.clone()))?;
-            if args.len() != sig.arity() {
-                return Err(TypeError::WrongNumberOfArgs {
-                    con: c.clone(),
-                    expected: sig.arity(),
-                    got: args.len(),
-                });
-            }
-            // Check each argument against its declared type.
-            // arg_tys is a telescope: arg_tys[k] lives in a scope with
-            // args[0..k-1] bound (outermost-first, indices 0..k-1 from
-            // outermost). We substitute earlier checked args in as we go.
-            let mut checked_args: Vec<Term> = Vec::with_capacity(args.len());
-            for (k, arg) in args.iter().enumerate() {
-                // arg_ty[k] has free indices 0..k-1 (de Bruijn, innermost =
-                // latest previous arg). Substitute them from innermost out.
-                let arg_ty = checked_args
+            // Check if this is an ordinary constructor.
+            if let Some(sig) = dt.find_con(c) {
+                if args.len() != sig.arity() {
+                    return Err(TypeError::WrongNumberOfArgs {
+                        con: c.clone(),
+                        expected: sig.arity(),
+                        got: args.len(),
+                    });
+                }
+                let mut checked_args: Vec<Term> = Vec::with_capacity(args.len());
+                for (k, arg) in args.iter().enumerate() {
+                    let arg_ty = checked_args
+                        .iter()
+                        .rev()
+                        .fold(sig.arg_tys[k].clone(), |ty, prev| beta(&ty, prev));
+                    check_dt(dts, ctx, arg, &nbe_eval(&arg_ty))?;
+                    checked_args.push(nbe_eval(arg));
+                }
+                Ok(Term::TData(d.clone()))
+            // Path constructor used as a term (without explicit @).
+            // Its type is Path (TData(d)) face0[args] face1[args].
+            } else if let Some(sig) = dt.find_pcon(c) {
+                if args.len() != sig.arity() {
+                    return Err(TypeError::WrongNumberOfArgs {
+                        con: c.clone(),
+                        expected: sig.arity(),
+                        got: args.len(),
+                    });
+                }
+                let mut checked_args: Vec<Term> = Vec::with_capacity(args.len());
+                for (k, arg) in args.iter().enumerate() {
+                    let arg_ty = checked_args
+                        .iter()
+                        .rev()
+                        .fold(sig.arg_tys[k].clone(), |ty, prev| beta(&ty, prev));
+                    check_dt(dts, ctx, arg, &nbe_eval(&arg_ty))?;
+                    checked_args.push(nbe_eval(arg));
+                }
+                let face0 = checked_args
                     .iter()
                     .rev()
-                    .fold(sig.arg_tys[k].clone(), |ty, prev| beta(&ty, prev));
-                check_dt(dts, ctx, arg, &nbe_eval(&arg_ty))?;
-                checked_args.push(nbe_eval(arg));
+                    .fold(sig.face0.clone(), |ty, a| beta(&ty, a));
+                let face1 = checked_args
+                    .iter()
+                    .rev()
+                    .fold(sig.face1.clone(), |ty, a| beta(&ty, a));
+                Ok(Term::TPath(
+                    Box::new(Term::TData(d.clone())),
+                    Box::new(nbe_eval(&face0)),
+                    Box::new(nbe_eval(&face1)),
+                ))
+            } else {
+                Err(TypeError::UnknownConstructor(d.clone(), c.clone()))
             }
-            Ok(Term::TData(d.clone()))
         }
 
         // TPCon(d, pc, args, r) : Path (TData(d)) face0[args] face1[args]
@@ -1452,13 +1480,9 @@ pub fn check_dt(dts: &[Datatype], ctx: &Ctx, t: &Term, ty: &Term) -> Result<(), 
         // endpoints). We still call require_equal at the end to catch any
         // endpoint mismatch the caller's annotation encodes.
         Term::TCon(d, c, args) => {
-            // Resolve expected datatype name from the annotation when possible,
-            // falling back to the constructor's own declared datatype.
             let expected_ty_nf = nbe_eval(ty);
             let expected_d = match &expected_ty_nf {
                 Term::TData(ed) => {
-                    // Consistency: the annotation's datatype must match the
-                    // constructor's declared datatype.
                     if ed != d {
                         return Err(TypeError::TypeMismatch(
                             expected_ty_nf.clone(),
@@ -1467,36 +1491,36 @@ pub fn check_dt(dts: &[Datatype], ctx: &Ctx, t: &Term, ty: &Term) -> Result<(), 
                     }
                     ed.clone()
                 }
-                // If the annotation isn't a TData, let infer catch it below.
                 _ => d.clone(),
             };
             let dt = dts
                 .iter()
                 .find(|dt| dt.name == expected_d)
                 .ok_or_else(|| TypeError::UnknownDatatype(expected_d.clone()))?;
-            let sig = dt
-                .find_con(c)
-                .ok_or_else(|| TypeError::UnknownConstructor(expected_d.clone(), c.clone()))?;
-            if args.len() != sig.arity() {
-                return Err(TypeError::WrongNumberOfArgs {
-                    con: c.clone(),
-                    expected: sig.arity(),
-                    got: args.len(),
-                });
+            if let Some(sig) = dt.find_con(c) {
+                if args.len() != sig.arity() {
+                    return Err(TypeError::WrongNumberOfArgs {
+                        con: c.clone(),
+                        expected: sig.arity(),
+                        got: args.len(),
+                    });
+                }
+                let mut checked_args: Vec<Term> = Vec::with_capacity(args.len());
+                for (k, arg) in args.iter().enumerate() {
+                    let arg_ty = checked_args
+                        .iter()
+                        .rev()
+                        .fold(sig.arg_tys[k].clone(), |ty, prev| beta(&ty, prev));
+                    check_dt(dts, ctx, arg, &nbe_eval(&arg_ty))?;
+                    checked_args.push(nbe_eval(arg));
+                }
+                require_equal(ctx, &expected_ty_nf, &Term::TData(d.clone()))
+            } else if dt.find_pcon(c).is_some() {
+                let inferred = infer_dt(dts, ctx, &Term::TCon(d.clone(), c.clone(), args.clone()))?;
+                require_equal(ctx, &expected_ty_nf, &nbe_eval(&inferred))
+            } else {
+                Err(TypeError::UnknownConstructor(expected_d.clone(), c.clone()))
             }
-            // Check args against the telescope, propagating checked args into
-            // later dependent positions (bidirectional mode for each arg).
-            let mut checked_args: Vec<Term> = Vec::with_capacity(args.len());
-            for (k, arg) in args.iter().enumerate() {
-                let arg_ty = checked_args
-                    .iter()
-                    .rev()
-                    .fold(sig.arg_tys[k].clone(), |ty, prev| beta(&ty, prev));
-                check_dt(dts, ctx, arg, &nbe_eval(&arg_ty))?;
-                checked_args.push(nbe_eval(arg));
-            }
-            // Verify the overall expected type equals TData(d).
-            require_equal(ctx, &expected_ty_nf, &Term::TData(d.clone()))
         }
 
         Term::TPCon(d, pc, args, r) => {
