@@ -1,13 +1,13 @@
-//! Transpile `.uwuc` cubical surface programs to type-erased Haskell.
+//! Transpile `.uwuc` cubical surface programs to type-erased Python.
 
-mod haskell;
+mod python;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use self::haskell::{
-    HaskellModuleCtx, collect_datatype_info, emit_main_driver, emit_module, hs_path_from_uwuc_path,
+use self::python::{
+    PythonModuleCtx, collect_datatype_info, emit_main_driver, emit_module, py_path_from_uwuc_path,
     module_name_from_path,
 };
 use crate::cubical::env::Env;
@@ -82,16 +82,16 @@ pub fn transpile_source(root_path: &Path, source: &str) -> Result<TranspileOutpu
         for (name, info) in collect_datatype_info(&file.decls, &module_name) {
             datatype_info.insert(name, info);
         }
-        let mut ctx = HaskellModuleCtx::from_decls(module_name.clone(), &file.decls);
+        let mut ctx = PythonModuleCtx::from_decls(module_name.clone(), &file.decls);
         let source_comment = file
             .uwuc_path
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("input.uwuc");
-        let hs_source = emit_module(&mut ctx, &file.decls, source_comment);
+        let py_source = emit_module(&mut ctx, &file.decls, source_comment);
         modules.push(EmittedModule {
-            path: hs_path_from_uwuc_path(&file.uwuc_path),
-            source: hs_source,
+            path: py_path_from_uwuc_path(&file.uwuc_path),
+            source: py_source,
         });
     }
 
@@ -120,7 +120,7 @@ pub fn transpile_source(root_path: &Path, source: &str) -> Result<TranspileOutpu
                 &datatype_info,
             );
             modules.push(EmittedModule {
-                path: PathBuf::from("Main.hs"),
+                path: PathBuf::from("main.py"),
                 source: driver,
             });
         }
@@ -271,14 +271,13 @@ mod tests {
         let out = transpile("Nat.uwuc").expect("Nat.uwuc should transpile");
         assert_eq!(out.modules.len(), 1);
         let nat = &out.modules[0].source;
-        assert!(nat.contains("module Nat where"));
-        assert!(nat.contains("Zero"));
-        assert!(nat.contains("Suc Nat"));
+        assert!(nat.contains("Zero = (\"Zero\",)"));
+        assert!(nat.contains("Suc = lambda a0: (\"Suc\", a0)"));
         assert!(out.prelude.is_none());
         assert!(
             !out.modules
                 .iter()
-                .any(|m| m.path.file_stem().and_then(|s| s.to_str()) == Some("Main"))
+                .any(|m| m.path.file_stem().and_then(|s| s.to_str()) == Some("main"))
         );
     }
 
@@ -289,21 +288,18 @@ mod tests {
         let hello = out
             .modules
             .iter()
-            .find(|m| m.path.file_stem().and_then(|s| s.to_str()) == Some("Hello"))
+            .find(|m| m.path.file_stem().and_then(|s| s.to_str()) == Some("hello"))
             .expect("hello module");
-        assert!(hello.source.contains("module Hello where"));
-        assert!(hello.source.contains("import Nat"));
-        assert!(hello.source.contains("main :: Nat -> Nat"));
-        assert!(hello.source.contains("Suc Zero"));
-        assert!(hello.source.contains("case"));
+        assert!(hello.source.contains("from nat import *"));
+        assert!(hello.source.contains("lambda n:"));
+        assert!(hello.source.contains("Zero"));
         let driver = out
             .modules
             .iter()
-            .find(|m| m.path.file_stem().and_then(|s| s.to_str()) == Some("Main"))
+            .find(|m| m.path.file_stem().and_then(|s| s.to_str()) == Some("main"))
             .expect("Main driver");
-        assert!(driver.source.contains("module Main where"));
-        assert!(driver.source.contains("main :: IO ()"));
-        assert!(driver.source.contains("Hello.main (Suc (Suc Zero))"));
+        assert!(driver.source.contains("if __name__ == \"__main__\":"));
+        assert!(driver.source.contains("hello.main(nat.Suc(nat.Suc(nat.Zero)))"));
         assert!(out.prelude.is_none());
     }
 
@@ -336,19 +332,18 @@ mod tests {
             std::env::temp_dir().join(format!("cubical_transpile_out_{}", std::process::id()));
         let out = transpile("hello.uwuc").unwrap();
         write_output(&out, &dir).unwrap();
-        assert!(dir.join("Nat.hs").exists());
-        assert!(dir.join("Hello.hs").exists());
-        assert!(dir.join("Main.hs").exists());
+        assert!(dir.join("nat.py").exists());
+        assert!(dir.join("hello.py").exists());
+        assert!(dir.join("main.py").exists());
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn transpile_erases_cubical_terms_to_plain_haskell() {
+    fn transpile_erases_cubical_terms_to_plain_python() {
         let src = "def x : I = i0\n";
         let out = transpile_source(Path::new("test.uwuc"), src).expect("should transpile");
         assert!(out.prelude.is_none());
         let test_mod = &out.modules[0].source;
-        assert!(!test_mod.contains("Cubical.Prelude"));
         assert!(!test_mod.contains("i0"));
     }
 }
