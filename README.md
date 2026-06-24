@@ -9,9 +9,9 @@ Make sure you have [Rust and Cargo installed](https://www.rust-lang.org/tools/in
 ```bash
 cargo run --release
 #if you use nix
-nix run github:pilisp/pilisp
-nix shell github:pilisp/pilisp
+nix run github:pi-lisp/pi-lisp
+nix shell github:pi-lisp/pi-lisp
 ```
 
 ## document
-[document](https://pilisp.github.io)
+[document](https://pi-lisp.github.io)
