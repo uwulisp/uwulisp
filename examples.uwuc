@@ -7,6 +7,7 @@
 --   * Path types and transport
 --   * match / elim
 --   * Sigma and Pi types
+--   * recursive functions and higher-order functions
 
 -- ── Ordinary datatypes ──────────────────────────────────────
 
@@ -32,6 +33,31 @@ def add : Nat -> Nat -> Nat
   = \m n. match m return Nat with
       | zero  => n
       | suc k => suc (add k n)
+
+def mul : Nat -> Nat -> Nat
+  = \m n. match m return Nat with
+      | zero  => zero
+      | suc k => add n (mul k n)
+
+def fac : Nat -> Nat
+  = \n. match n return Nat with
+      | zero  => suc zero
+      | suc k => mul (suc k) (fac k)
+
+def fib : Nat -> Nat
+  = \n. match n return Nat with
+      | zero          => zero
+      | suc k         => match k return Nat with
+          | zero          => suc zero
+          | suc k2        => add (fib k) (fib k2)
+
+-- ── Higher-order functions ────────────────────────────────────
+
+def apply : (Nat -> Nat) -> Nat -> Nat
+  = \f x. f x
+
+def twice : (Nat -> Nat) -> Nat -> Nat
+  = \f x. f (f x)
 
 -- ── Higher inductive type: the circle S1 ────────────────────
 -- `loop` is a path constructor: it returns S1, but is decorated
@@ -93,5 +119,12 @@ def fstOfPair : Nat
 def depPair : (b : Bool) * Nat
   = (true, zero)
 
+-- ── Stress test computation ──────────────────────────────────
+-- main = 2 * fac 5 + fib 7
+--      = 2 * 120 + 13
+--      = 253
+
 def main : Nat
-  = add (suc zero) (suc (suc zero))
+  = add
+      (mul (suc (suc zero)) (fac (suc (suc (suc (suc (suc zero)))))))
+      (fib (suc (suc (suc (suc (suc (suc (suc zero))))))))
