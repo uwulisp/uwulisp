@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use crate::cubical::interval::{DNF, I, Literal};
+use crate::cubical::interval::I;
 use crate::cubical::parser::Decl;
 use crate::cubical::syntax::{ConSig, Datatype, ElimCase, Name, PConSig, Term};
 
@@ -13,7 +13,7 @@ pub struct HaskellModuleCtx {
     pub imports: Vec<String>,
     pub constructors: HashMap<Name, Name>,
     pub datatypes: HashSet<Name>,
-    pub uses_cubical: bool,
+    pub pconstructors: HashSet<Name>,
 }
 
 impl HaskellModuleCtx {
@@ -21,6 +21,7 @@ impl HaskellModuleCtx {
         let mut imports = Vec::new();
         let mut constructors = HashMap::new();
         let mut datatypes = HashSet::new();
+        let mut pconstructors = HashSet::new();
 
         for decl in decls {
             match decl {
@@ -30,7 +31,7 @@ impl HaskellModuleCtx {
                     }
                 }
                 Decl::Data(dt) => {
-                    register_datatype(dt, &mut constructors, &mut datatypes);
+                    register_datatype(dt, &mut constructors, &mut datatypes, &mut pconstructors);
                 }
                 Decl::Def { .. } => {}
             }
@@ -41,7 +42,7 @@ impl HaskellModuleCtx {
             imports,
             constructors,
             datatypes,
-            uses_cubical: false,
+            pconstructors,
         }
     }
 }
@@ -62,15 +63,12 @@ pub fn hs_path_from_uwuc_path(path: &PathBuf) -> PathBuf {
 }
 
 pub fn emit_module(ctx: &mut HaskellModuleCtx, decls: &[Decl], source_comment: &str) -> String {
-    prescan_cubical_usage(ctx, decls);
-
     let mut out = String::new();
     out.push_str(&format!("-- generated from {}\n", source_comment));
     out.push_str(&format!("module {} where\n\n", ctx.module_name));
 
-    if ctx.uses_cubical {
-        out.push_str("import Cubical.Prelude\n");
-    }
+    out.push_str("import Data.Kind (Type)\n");
+    out.push_str("import Unsafe.Coerce (unsafeCoerce)\n");
 
     let mut import_lines: Vec<String> = ctx
         .imports
@@ -83,9 +81,13 @@ pub fn emit_module(ctx: &mut HaskellModuleCtx, decls: &[Decl], source_comment: &
         out.push_str(&line);
         out.push('\n');
     }
-    if !ctx.imports.is_empty() || ctx.uses_cubical {
+    if !ctx.imports.is_empty() {
+        out.push('\n');
+    } else {
         out.push('\n');
     }
+
+    let mut name_env: Vec<Name> = Vec::new();
 
     for decl in decls {
         match decl {
@@ -95,9 +97,10 @@ pub fn emit_module(ctx: &mut HaskellModuleCtx, decls: &[Decl], source_comment: &
                 out.push_str("\n\n");
             }
             Decl::Def { name, ty, val } => {
-                let erased_ty = emit_type_erased(ty, &[], ctx);
+                name_env.insert(0, name.clone());
+                let erased_ty = emit_type_erased(ty, &name_env, ctx);
                 out.push_str(&format!("{} :: {}\n", name, erased_ty));
-                out.push_str(&format!("{} = {}\n", name, emit_term(val, &[], ctx)));
+                out.push_str(&format!("{} = {}\n", name, emit_term(val, &name_env, ctx)));
                 out.push('\n');
             }
         }
@@ -106,200 +109,13 @@ pub fn emit_module(ctx: &mut HaskellModuleCtx, decls: &[Decl], source_comment: &
     out
 }
 
-fn prescan_cubical_usage(ctx: &mut HaskellModuleCtx, decls: &[Decl]) {
-    for decl in decls {
-        match decl {
-            Decl::Import { .. } => {}
-            Decl::Data(dt) => {
-                for con in &dt.cons {
-                    for ty in &con.arg_tys {
-                        prescan_type(ty, ctx);
-                    }
-                }
-                for pcon in &dt.pcons {
-                    for ty in &pcon.arg_tys {
-                        prescan_type(ty, ctx);
-                    }
-                    prescan_term(&pcon.face0, ctx);
-                    prescan_term(&pcon.face1, ctx);
-                }
-            }
-            Decl::Def { ty, val, .. } => {
-                prescan_type(ty, ctx);
-                prescan_term(val, ctx);
-            }
-        }
-    }
-}
 
-fn prescan_type(ty: &Term, ctx: &mut HaskellModuleCtx) {
-    if is_cubical_type(ty) {
-        ctx.uses_cubical = true;
-    }
-    walk_type(ty, ctx);
-}
-
-fn prescan_term(term: &Term, ctx: &mut HaskellModuleCtx) {
-    if is_cubical_term(term) {
-        ctx.uses_cubical = true;
-    }
-    walk_term(term, ctx);
-}
-
-fn is_cubical_type(ty: &Term) -> bool {
-    matches!(
-        ty,
-        Term::TIntervalTy
-            | Term::TPath(_, _, _)
-            | Term::TEquiv(_, _)
-            | Term::TGlue(_, _, _)
-            | Term::TCube(_)
-    )
-}
-
-fn is_cubical_term(term: &Term) -> bool {
-    matches!(
-        term,
-        Term::TIntervalTy
-            | Term::TInterval(_)
-            | Term::TCube(_)
-            | Term::TPath(_, _, _)
-            | Term::PLam(_, _)
-            | Term::PApp(_, _)
-            | Term::THComp(_, _, _, _)
-            | Term::TEquiv(_, _)
-            | Term::TMkEquiv(_, _, _, _, _, _)
-            | Term::TEquivFwd(_, _)
-            | Term::TUa(_)
-            | Term::TTransport(_, _)
-            | Term::TGlue(_, _, _)
-            | Term::TGlueElem(_, _, _)
-            | Term::TUnglue(_, _, _)
-            | Term::TPCon(_, _, _, _)
-    )
-}
-
-fn walk_type(ty: &Term, ctx: &mut HaskellModuleCtx) {
-    match ty {
-        Term::TPi(_, a, b) | Term::TSigma(_, a, b) => {
-            prescan_type(a, ctx);
-            prescan_type(b, ctx);
-        }
-        Term::TPath(a, u, v) => {
-            prescan_type(a, ctx);
-            prescan_term(u, ctx);
-            prescan_term(v, ctx);
-        }
-        Term::TEquiv(a, b) => {
-            prescan_type(a, ctx);
-            prescan_type(b, ctx);
-        }
-        Term::TGlue(a, phi, te) => {
-            prescan_type(a, ctx);
-            prescan_term(phi, ctx);
-            prescan_term(te, ctx);
-        }
-        Term::TApp(f, a) => {
-            prescan_type(f, ctx);
-            prescan_term(a, ctx);
-        }
-        _ => {}
-    }
-}
-
-fn walk_term(term: &Term, ctx: &mut HaskellModuleCtx) {
-    match term {
-        Term::TApp(f, a) => {
-            prescan_term(f, ctx);
-            prescan_term(a, ctx);
-        }
-        Term::TAbs(_, b) | Term::PLam(_, b) => prescan_term(b, ctx),
-        Term::TPi(_, a, b) | Term::TSigma(_, a, b) => {
-            prescan_type(a, ctx);
-            prescan_type(b, ctx);
-        }
-        Term::TPath(a, u, v) => {
-            prescan_type(a, ctx);
-            prescan_term(u, ctx);
-            prescan_term(v, ctx);
-        }
-        Term::PApp(p, r) => {
-            prescan_term(p, ctx);
-            prescan_term(r, ctx);
-        }
-        Term::THComp(a, phi, u, u0) => {
-            prescan_type(a, ctx);
-            prescan_term(phi, ctx);
-            prescan_term(u, ctx);
-            prescan_term(u0, ctx);
-        }
-        Term::TMkEquiv(a, b, f, g, eta, eps) => {
-            for t in [
-                a.as_ref(),
-                b.as_ref(),
-                f.as_ref(),
-                g.as_ref(),
-                eta.as_ref(),
-                eps.as_ref(),
-            ] {
-                prescan_term(t, ctx);
-            }
-        }
-        Term::TEquiv(a, b) => {
-            prescan_type(a, ctx);
-            prescan_type(b, ctx);
-        }
-        Term::TEquivFwd(e, x) | Term::TTransport(e, x) => {
-            prescan_term(e, ctx);
-            prescan_term(x, ctx);
-        }
-        Term::TUa(e) => prescan_term(e, ctx),
-        Term::TGlue(a, phi, te) => {
-            prescan_type(a, ctx);
-            prescan_term(phi, ctx);
-            prescan_term(te, ctx);
-        }
-        Term::TGlueElem(phi, t, a) => {
-            prescan_term(phi, ctx);
-            prescan_term(t, ctx);
-            prescan_term(a, ctx);
-        }
-        Term::TUnglue(phi, te, g) => {
-            prescan_term(phi, ctx);
-            prescan_term(te, ctx);
-            prescan_term(g, ctx);
-        }
-        Term::TPair(a, b) => {
-            prescan_term(a, ctx);
-            prescan_term(b, ctx);
-        }
-        Term::TFst(p) | Term::TSnd(p) => prescan_term(p, ctx),
-        Term::TCon(_, _, args) => {
-            for a in args {
-                prescan_term(a, ctx);
-            }
-        }
-        Term::TPCon(_, _, args, r) => {
-            for a in args {
-                prescan_term(a, ctx);
-            }
-            prescan_term(r, ctx);
-        }
-        Term::TElim(m, cases, s) => {
-            prescan_term(m, ctx);
-            prescan_term(s, ctx);
-            for case in cases {
-                prescan_term(&case.body, ctx);
-            }
-        }
-        _ => {}
-    }
-}
 
 fn register_datatype(
     dt: &Datatype,
     constructors: &mut HashMap<Name, Name>,
     datatypes: &mut HashSet<Name>,
+    pconstructors: &mut HashSet<Name>,
 ) {
     datatypes.insert(dt.name.clone());
     for con in &dt.cons {
@@ -307,6 +123,7 @@ fn register_datatype(
     }
     for pcon in &dt.pcons {
         constructors.insert(pcon.name.clone(), capitalize_ident(&pcon.name));
+        pconstructors.insert(pcon.name.clone());
     }
 }
 
@@ -316,11 +133,7 @@ fn emit_datatype(dt: &Datatype, constructors: &HashMap<Name, Name>) -> String {
         parts.push(emit_constructor_decl(con, constructors));
     }
     for pcon in &dt.pcons {
-        parts.push(format!(
-            "-- path constructor {} (endpoints stubbed; see Cubical.Prelude)\n  {}",
-            pcon.name,
-            emit_path_constructor_decl(pcon, constructors)
-        ));
+        parts.push(emit_path_constructor_decl(pcon, constructors));
     }
     format!("data {} = {} deriving Show", dt.name, parts.join("\n  | "))
 }
@@ -365,21 +178,24 @@ fn bare_ctx() -> HaskellModuleCtx {
         imports: Vec::new(),
         constructors: HashMap::new(),
         datatypes: HashSet::new(),
-        uses_cubical: false,
+        pconstructors: HashSet::new(),
     }
 }
 
 pub fn emit_type_erased(ty: &Term, env: &[Name], ctx: &mut HaskellModuleCtx) -> String {
     match ty {
         Term::TUniv(_) => "Type".to_string(),
-        Term::TIntervalTy => {
-            ctx.uses_cubical = true;
-            "I".to_string()
-        }
+        Term::TIntervalTy => "()".to_string(),
         Term::TPi(x, a, b) => {
-            let mut env2 = vec![x.clone()];
+            let lc = lowercase_first(x);
+            let mut env2 = vec![lc];
             env2.extend_from_slice(env);
             let a_str = emit_type_erased(a, env, ctx);
+            let a_str = if is_function_type(a) {
+                format!("({})", a_str)
+            } else {
+                a_str
+            };
             let b_str = emit_type_erased(b, &env2, ctx);
             if term_mentions_var(b, 0) {
                 format!("{} -> {}  -- ERASED: dependent Pi", a_str, b_str)
@@ -388,9 +204,15 @@ pub fn emit_type_erased(ty: &Term, env: &[Name], ctx: &mut HaskellModuleCtx) -> 
             }
         }
         Term::TSigma(x, a, b) => {
-            let mut env2 = vec![x.clone()];
+            let lc = lowercase_first(x);
+            let mut env2 = vec![lc];
             env2.extend_from_slice(env);
             let a_str = emit_type_erased(a, env, ctx);
+            let a_str = if is_function_type(a) {
+                format!("({})", a_str)
+            } else {
+                a_str
+            };
             let b_str = emit_type_erased(b, &env2, ctx);
             if term_mentions_var(b, 0) {
                 format!("({}, {})  -- ERASED: dependent Sigma", a_str, b_str)
@@ -399,32 +221,17 @@ pub fn emit_type_erased(ty: &Term, env: &[Name], ctx: &mut HaskellModuleCtx) -> 
             }
         }
         Term::TData(name) => name.clone(),
-        Term::TPath(a, u, v) => {
-            ctx.uses_cubical = true;
-            format!(
-                "Path {} {} {}",
-                emit_type_erased(a, env, ctx),
-                emit_term(u, env, ctx),
-                emit_term(v, env, ctx)
-            )
-        }
+        Term::TPath(a, _, _) => emit_type_erased(a, env, ctx),
         Term::TEquiv(a, b) => {
-            ctx.uses_cubical = true;
-            format!(
-                "Equiv {} {}",
-                emit_type_erased(a, env, ctx),
-                emit_type_erased(b, env, ctx)
-            )
-        }
-        Term::TGlue(a, phi, te) => {
-            ctx.uses_cubical = true;
-            format!(
-                "Glue {} {} {}",
-                emit_type_erased(a, env, ctx),
-                emit_term(phi, env, ctx),
-                emit_term(te, env, ctx)
-            )
-        }
+            let a_str = emit_type_erased(a, env, ctx);
+            let a_str = if is_function_type(a) {
+                format!("({})", a_str)
+            } else {
+                a_str
+            };
+            format!("{} -> {}", a_str, emit_type_erased(b, env, ctx))
+        },
+        Term::TGlue(a, _, _) => emit_type_erased(a, env, ctx),
         Term::TApp(f, a) => format!(
             "{} {}",
             emit_type_erased(f, env, ctx),
@@ -449,131 +256,60 @@ pub fn emit_term(term: &Term, env: &[Name], ctx: &mut HaskellModuleCtx) -> Strin
             .cloned()
             .unwrap_or_else(|| format!("v{}", i)),
         Term::TAbs(x, body) => {
-            let mut env2 = vec![x.clone()];
+            let lc = lowercase_first(x);
+            let mut env2 = vec![lc.clone()];
             env2.extend_from_slice(env);
-            format!("\\{} -> {}", x, emit_term(body, &env2, ctx))
+            format!("\\{} -> {}", lc, emit_term(body, &env2, ctx))
         }
         Term::TApp(f, a) => format!("({} {})", emit_term(f, env, ctx), emit_term(a, env, ctx)),
         Term::TUniv(n) => format!("u{}", n),
-        Term::TIntervalTy => {
-            ctx.uses_cubical = true;
-            "iType".to_string()
-        }
+        Term::TIntervalTy => "()".to_string(),
         Term::TPi(x, a, b) => {
-            let mut env2 = vec![x.clone()];
+            let lc = lowercase_first(x);
+            let mut env2 = vec![lc];
             env2.extend_from_slice(env);
+            let a_str = emit_type_erased(a, env, ctx);
+            let a_str = if is_function_type(a) {
+                format!("({})", a_str)
+            } else {
+                a_str
+            };
             format!(
                 "({} -> {})",
-                emit_type_erased(a, env, ctx),
+                a_str,
                 emit_type_erased(b, &env2, ctx)
             )
         }
-        Term::TInterval(i) => {
-            ctx.uses_cubical = true;
-            emit_interval(i, env)
-        }
-        Term::TCube(dnf) => {
-            ctx.uses_cubical = true;
-            emit_dnf(dnf)
-        }
-        Term::TPath(a, u, v) => {
-            ctx.uses_cubical = true;
-            format!(
-                "path {} {} {}",
-                emit_type_erased(a, env, ctx),
-                emit_term(u, env, ctx),
-                emit_term(v, env, ctx)
-            )
-        }
+        Term::TInterval(i) => emit_interval(i, env),
+        Term::TCube(_) => "()".to_string(),
+        Term::TPath(a, _, _) => emit_type_erased(a, env, ctx),
         Term::PLam(x, body) => {
-            ctx.uses_cubical = true;
-            let mut env2 = vec![x.clone()];
+            let lc = lowercase_first(x);
+            let mut env2 = vec![lc];
             env2.extend_from_slice(env);
-            format!("plam (\\{} -> {})", x, emit_term(body, &env2, ctx))
+            emit_term(body, &env2, ctx)
         }
-        Term::PApp(p, r) => {
-            ctx.uses_cubical = true;
-            format!("papp {} {}", emit_term(p, env, ctx), emit_term(r, env, ctx))
-        }
-        Term::THComp(a, phi, u, u0) => {
-            ctx.uses_cubical = true;
-            format!(
-                "hcomp {} {} {} {}",
-                emit_type_erased(a, env, ctx),
-                emit_term(phi, env, ctx),
-                emit_term(u, env, ctx),
-                emit_term(u0, env, ctx)
-            )
-        }
+        Term::PApp(p, _) => emit_term(p, env, ctx),
+        Term::THComp(_, _, _, u0) => emit_term(u0, env, ctx),
         Term::TEquiv(a, b) => {
-            ctx.uses_cubical = true;
-            format!(
-                "equivType {} {}",
-                emit_type_erased(a, env, ctx),
-                emit_type_erased(b, env, ctx)
-            )
-        }
-        Term::TMkEquiv(a, b, f, g, eta, eps) => {
-            ctx.uses_cubical = true;
-            format!(
-                "mkEquiv {} {} {} {} {} {}",
-                emit_type_erased(a, env, ctx),
-                emit_type_erased(b, env, ctx),
-                emit_term(f, env, ctx),
-                emit_term(g, env, ctx),
-                emit_term(eta, env, ctx),
-                emit_term(eps, env, ctx)
-            )
-        }
-        Term::TEquivFwd(e, x) => {
-            ctx.uses_cubical = true;
-            format!(
-                "equivFwd {} {}",
-                emit_term(e, env, ctx),
-                emit_term(x, env, ctx)
-            )
-        }
-        Term::TUa(e) => {
-            ctx.uses_cubical = true;
-            format!("ua {}", emit_term(e, env, ctx))
-        }
-        Term::TTransport(p, x) => {
-            ctx.uses_cubical = true;
-            format!(
-                "transport {} {}",
-                emit_term(p, env, ctx),
-                emit_term(x, env, ctx)
-            )
-        }
-        Term::TGlue(a, phi, te) => {
-            ctx.uses_cubical = true;
-            format!(
-                "glueType {} {} {}",
-                emit_type_erased(a, env, ctx),
-                emit_term(phi, env, ctx),
-                emit_term(te, env, ctx)
-            )
-        }
-        Term::TGlueElem(phi, t, a) => {
-            ctx.uses_cubical = true;
-            format!(
-                "glueElem {} {} {}",
-                emit_term(phi, env, ctx),
-                emit_term(t, env, ctx),
-                emit_term(a, env, ctx)
-            )
-        }
-        Term::TUnglue(phi, te, g) => {
-            ctx.uses_cubical = true;
-            format!(
-                "unglue {} {} {}",
-                emit_term(phi, env, ctx),
-                emit_term(te, env, ctx),
-                emit_term(g, env, ctx)
-            )
-        }
+            let a_str = emit_type_erased(a, env, ctx);
+            let a_str = if is_function_type(a) {
+                format!("({})", a_str)
+            } else {
+                a_str
+            };
+            format!("{} -> {}", a_str, emit_type_erased(b, env, ctx))
+        },
+        Term::TMkEquiv(_, _, f, _, _, _) => emit_term(f, env, ctx),
+        Term::TEquivFwd(e, x) => format!("({} {})", emit_term(e, env, ctx), emit_term(x, env, ctx)),
+        Term::TUa(_) => "undefined".to_string(),
+        Term::TTransport(_, x) => format!("unsafeCoerce ({})", emit_term(x, env, ctx)),
+        Term::TGlue(a, _, _) => emit_type_erased(a, env, ctx),
+        Term::TGlueElem(_, t, _) => format!("unsafeCoerce ({})", emit_term(t, env, ctx)),
+        Term::TUnglue(_, _, g) => emit_term(g, env, ctx),
         Term::TSigma(x, a, b) => {
-            let mut env2 = vec![x.clone()];
+            let lc = lowercase_first(x);
+            let mut env2 = vec![lc];
             env2.extend_from_slice(env);
             format!(
                 "({}, {})",
@@ -598,16 +334,18 @@ pub fn emit_term(term: &Term, env: &[Name], ctx: &mut HaskellModuleCtx) -> Strin
                 format!("({} {})", hs_con, arg_strs.join(" "))
             }
         }
-        Term::TPCon(_, con, args, r) => {
-            ctx.uses_cubical = true;
+        Term::TPCon(_, con, args, _) => {
             let hs_con = ctx
                 .constructors
                 .get(con)
                 .cloned()
                 .unwrap_or_else(|| capitalize_ident(con));
-            let mut arg_strs: Vec<String> = args.iter().map(|a| emit_term(a, env, ctx)).collect();
-            arg_strs.push(format!("@ {}", emit_term(r, env, ctx)));
-            format!("({} {})", hs_con, arg_strs.join(" "))
+            if args.is_empty() {
+                hs_con
+            } else {
+                let arg_strs: Vec<String> = args.iter().map(|a| emit_term(a, env, ctx)).collect();
+                format!("({} {})", hs_con, arg_strs.join(" "))
+            }
         }
         Term::TElim(_motive, cases, scrut) => emit_elim(cases, scrut, env, ctx),
     }
@@ -616,8 +354,16 @@ pub fn emit_term(term: &Term, env: &[Name], ctx: &mut HaskellModuleCtx) -> Strin
 fn emit_elim(cases: &[ElimCase], scrut: &Term, env: &[Name], ctx: &mut HaskellModuleCtx) -> String {
     let mut arms = Vec::new();
     for case in cases {
-        let pat = emit_case_pattern(&case.con, &case.binders, ctx);
-        let mut env2 = case.binders.clone();
+        let is_pcon = ctx.pconstructors.contains(&case.con);
+        let lc_binders: Vec<Name> = case.binders.iter().map(|b| lowercase_first(b)).collect();
+        let (pat_binders, env_binders) = if is_pcon && !lc_binders.is_empty() {
+            let (rest, _last) = lc_binders.split_at(lc_binders.len() - 1);
+            (rest.to_vec(), rest.to_vec())
+        } else {
+            (lc_binders.clone(), lc_binders.clone())
+        };
+        let pat = emit_case_pattern(&case.con, &pat_binders, ctx);
+        let mut env2 = env_binders;
         env2.reverse();
         env2.extend_from_slice(env);
         arms.push(format!("{} -> {}", pat, emit_term(&case.body, &env2, ctx)));
@@ -660,41 +406,11 @@ fn try_emit_let(term: &Term, env: &[Name], ctx: &mut HaskellModuleCtx) -> Option
 
 fn emit_interval(i: &I, env: &[Name]) -> String {
     match i {
-        I::I0 => "i0".to_string(),
-        I::I1 => "i1".to_string(),
         I::IVar(n) => env
             .get(*n as usize)
             .cloned()
             .unwrap_or_else(|| format!("i{}", n)),
-        I::Meet(a, b) => format!("({} /\\ {})", emit_interval(a, env), emit_interval(b, env)),
-        I::Join(a, b) => format!("({} \\/ {})", emit_interval(a, env), emit_interval(b, env)),
-        I::Neg(a) => format!("(~ {})", emit_interval(a, env)),
-    }
-}
-
-fn emit_dnf(dnf: &DNF) -> String {
-    if dnf.cubes.is_empty() {
-        return "i0".to_string();
-    }
-    if dnf.cubes.len() == 1 && dnf.cubes.iter().next().unwrap().is_empty() {
-        return "i1".to_string();
-    }
-    let parts: Vec<String> = dnf.cubes.iter().map(emit_cube).collect();
-    format!("({})", parts.join(" \\/ "))
-}
-
-fn emit_cube(cube: &std::collections::BTreeSet<Literal>) -> String {
-    if cube.is_empty() {
-        "i1".to_string()
-    } else {
-        let lits: Vec<String> = cube
-            .iter()
-            .map(|l| match l {
-                Literal::Pos(n) => format!("i{}", n),
-                Literal::NegVar(n) => format!("~i{}", n),
-            })
-            .collect();
-        format!("({})", lits.join(" /\\ "))
+        _ => "()".to_string(),
     }
 }
 
@@ -768,6 +484,18 @@ pub fn capitalize_ident(name: &str) -> String {
     }
 }
 
+fn is_function_type(ty: &Term) -> bool {
+    matches!(ty, Term::TPi(..) | Term::TSigma(..) | Term::TEquiv(..))
+}
+
+fn lowercase_first(name: &str) -> String {
+    let mut chars = name.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_lowercase().collect::<String>() + chars.as_str(),
+    }
+}
+
 /// Haskell module name for a `.uwuc` file (`Nat.uwuc` → `Nat`).
 /// Avoids clashing with the generated executable driver module `Main`.
 pub fn module_name_from_path(path: &std::path::Path) -> String {
@@ -813,14 +541,13 @@ pub fn collect_datatype_info(decls: &[Decl], module_name: &str) -> HashMap<Name,
     map
 }
 
-/// Emit `Main.hs` with `main :: IO ()` that runs the root file's last definition.
+/// Emit `Main.hs` with `main :: IO ()` that runs the user's `main` definition.
 pub fn emit_main_driver(
     root_comment: &str,
     entry_module: &str,
     entry_name: &str,
     entry_ty: &Term,
     datatype_info: &HashMap<Name, DatatypeInfo>,
-    uses_cubical: bool,
 ) -> String {
     let (call_expr, extra_imports) =
         emit_entry_call(entry_module, entry_name, entry_ty, datatype_info);
@@ -835,14 +562,13 @@ pub fn emit_main_driver(
     let mut out = String::new();
     out.push_str(&format!("-- generated runner for {}\n", root_comment));
     out.push_str("module Main where\n\n");
-    if uses_cubical {
-        out.push_str("import Cubical.Prelude\n");
-    }
-    let has_imports = !imports.is_empty();
+    out.push_str("import Data.Kind (Type)\n");
     for imp in &imports {
         out.push_str(&format!("import {}\n", imp));
     }
-    if uses_cubical || has_imports {
+    if !imports.is_empty() {
+        out.push('\n');
+    } else {
         out.push('\n');
     }
     out.push_str("main :: IO ()\n");

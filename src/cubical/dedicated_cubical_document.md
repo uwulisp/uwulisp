@@ -438,7 +438,9 @@ The `transpile` module (`transpile.rs`) converts `.uwuc` files to type-erased Ha
 uwulisp --cubical-transpile <file.uwuc> [-o <output-dir>]
 ```
 
-The transpiler also emits `Main.hs` with `main :: IO ()`, which calls the root file's last `def` (same entry point as `cubical::run`) using demo arguments (`Suc (Suc Zero)` for `Nat`, nullary constructors otherwise). Build and run:
+The transpiler is self-contained in `src/cubical` — no external runtime or prelude is needed. To run the output, the root `.uwuc` file must explicitly define `def main : <showable-type> = ...`. The transpiler then emits `Main.hs` that calls `Module.main` (filling in Pi arguments with demo values such as `Suc (Suc Zero)` for `Nat`). If no `main` definition exists, no `Main.hs` is generated.
+
+Build and run:
 
 ```
 cd <output-dir>
@@ -446,19 +448,40 @@ ghc -o app Main.hs
 ./app
 ```
 
-### Supported (full emission)
+### Erasure strategy
+
+All cubical types and terms are erased to plain Haskell:
+
+| Cubical construct | Emitted as |
+|-------------------|------------|
+| `I` (interval type) | `()` |
+| `Path A u v` | `A` |
+| `Equiv A B` | `A -> B` |
+| `Glue A phi te` | `A` |
+| `PLam i body` | `body` (interval binder dropped) |
+| `PApp p i` | `p` |
+| `hcomp A phi u u0` | `u0` (base case) |
+| `transport p x` | `unsafeCoerce x` (type changes preserved by coercion) |
+| `ua e` | `undefined` |
+| `mkEquiv A B f ...` | `f` |
+| `equivFwd e x` | `e x` |
+| `glueElem phi t a` | `unsafeCoerce t` |
+| `unglue phi te g` | `g` |
+| Interval expressions | `()` |
+
+`unsafeCoerce` is imported from `Unsafe.Coerce` and is used wherever type erasure loses information (transport, glue).
+
+### Supported
 
 - `import`, `data`, `def`
 - Lambda, application, `let` (parsed as application of abstraction)
 - `match` / `elim` on ordinary constructors → Haskell `case`
+- `match` / `elim` on path constructors → ordinary case (interval binder stripped)
 - Non-dependent `->`, `*`, pairs, `fst`/`snd`
 - Type erasure: dependent `Π`/`Σ` become plain `->` and tuples
+- All cubical primitives (erased as above)
 
-### Stubbed (via `Cubical.Prelude`)
+### Known limitations
 
-Cubical primitives emit calls into [`runtime/haskell/Cubical/Prelude.hs`](../../runtime/haskell/Cubical/Prelude.hs). These provide names and types for GHC but do not implement cubical computation:
-
-- Interval (`I`, `i0`, `i1`, `/\`, `\/`, `~`)
-- Paths (`Path`, `plam`, `papp`)
-- `hcomp`, `transport`, `ua`, `Equiv`, `Glue`, `glueElem`, `unglue`
-- Path constructors on HITs (data declarations include a comment; endpoints are not generated)
+- Names in the generated Haskell may shadow each other (e.g. `\a -> \a -> a` references the innermost binder). This is scoped correctly within the body.
+- `transport` and `glueElem` emit `unsafeCoerce`, which bypasses the type system. The generated code is safe at runtime (equivalence guarantees equal underlying values) but GHC cannot verify the types.

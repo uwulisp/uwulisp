@@ -151,9 +151,6 @@ fn main() {
                                     .display()
                             );
                         }
-                        if let Some(prelude) = &output.prelude {
-                            println!("wrote {}", out_dir.join(&prelude.path).display());
-                        }
                         if output
                             .modules
                             .iter()
