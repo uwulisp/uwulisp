@@ -4,7 +4,7 @@ sidebar:
   order: 10
 ---
 
-This document describes the concrete syntax of the cubical surface language parsed by `parser.rs`. The language is a dependently-typed calculus with cubical type theory extensions: path types, interval expressions, Glue types, and higher inductive types.
+This document describes the concrete syntax of the cubical surface language parsed by `parser.rs` and compiled by `transpile.rs`. The language is a dependently-typed calculus with cubical type theory extensions: path types, interval expressions, Glue types, and higher inductive types.
 
 ---
 
@@ -430,58 +430,58 @@ atom     ::= ident | '0' | '1' | '(' term ')'
 
 ---
 
-## Haskell transpilation
+## Python transpilation
 
-The `transpile` module (`transpile.rs`) converts `.uwuc` files to type-erased Haskell via:
+The `transpile` module (`transpile.rs`) converts `.uwuc` files to type-erased Python via:
 
 ```
 uwulisp --cubical-transpile <file.uwuc> [-o <output-dir>]
 ```
 
-The transpiler is self-contained in `src/cubical` — no external runtime or prelude is needed. To run the output, the root `.uwuc` file must explicitly define `def main : <showable-type> = ...`. The transpiler then emits `Main.hs` that calls `Module.main` (filling in Pi arguments with demo values such as `Suc (Suc Zero)` for `Nat`). If no `main` definition exists, no `Main.hs` is generated.
+The transpiler is self-contained in `src/cubical` — no external runtime or prelude is needed. To run the output, the root `.uwuc` file must explicitly define `def main : <showable-type> = ...`. The transpiler then emits `main.py` that calls `module.main` (filling in Pi arguments with demo values such as `nat.Suc(nat.Suc(nat.Zero))` for `Nat`). If no `main` definition exists, no `main.py` is generated.
 
-Build and run:
+Run:
 
 ```
-cd <output-dir>
-ghc -o app Main.hs
-./app
+python3 <output-dir>/main.py
 ```
 
 ### Erasure strategy
 
-All cubical types and terms are erased to plain Haskell:
+All cubical types and terms are erased to plain Python:
 
 | Cubical construct | Emitted as |
 |-------------------|------------|
-| `I` (interval type) | `()` |
+| `I` (interval type) | `None` |
 | `Path A u v` | `A` |
-| `Equiv A B` | `A -> B` |
+| `Equiv A B` | `(lambda x: x)` (identity) |
 | `Glue A phi te` | `A` |
 | `PLam i body` | `body` (interval binder dropped) |
 | `PApp p i` | `p` |
 | `hcomp A phi u u0` | `u0` (base case) |
-| `transport p x` | `unsafeCoerce x` (type changes preserved by coercion) |
-| `ua e` | `undefined` |
+| `transport p x` | `x` (identity — dynamic typing avoids coercions) |
+| `ua e` | `(lambda x: x)` |
 | `mkEquiv A B f ...` | `f` |
-| `equivFwd e x` | `e x` |
-| `glueElem phi t a` | `unsafeCoerce t` |
+| `equivFwd e x` | `e(x)` |
+| `glueElem phi t a` | `t` |
 | `unglue phi te g` | `g` |
-| Interval expressions | `()` |
+| Interval expressions | `None` |
 
-`unsafeCoerce` is imported from `Unsafe.Coerce` and is used wherever type erasure loses information (transport, glue).
+Because Python is dynamically typed, no runtime coercions are needed — `transport` and `glueElem` simply return their argument. Each datatype is represented as tuples with a string tag (e.g. `("Suc", n)`), making pattern matching via tuple indexing straightforward.
 
 ### Supported
 
 - `import`, `data`, `def`
 - Lambda, application, `let` (parsed as application of abstraction)
-- `match` / `elim` on ordinary constructors → Haskell `case`
+- `match` / `elim` on ordinary constructors → chained ternary with tuple tag checks
 - `match` / `elim` on path constructors → ordinary case (interval binder stripped)
 - Non-dependent `->`, `*`, pairs, `fst`/`snd`
-- Type erasure: dependent `Π`/`Σ` become plain `->` and tuples
+- Type erasure: dependent `Π`/`Σ` become plain functions and tuples
 - All cubical primitives (erased as above)
 
 ### Known limitations
 
-- Names in the generated Haskell may shadow each other (e.g. `\a -> \a -> a` references the innermost binder). This is scoped correctly within the body.
-- `transport` and `glueElem` emit `unsafeCoerce`, which bypasses the type system. The generated code is safe at runtime (equivalence guarantees equal underlying values) but GHC cannot verify the types.
+- Names in the generated Python may shadow each other (e.g. `lambda a: lambda a: a` references the innermost binder). This is scoped correctly within the body.
+- `match`/`elim` generates a chained ternary expression wrapped in an immediately-invoked lambda. For large pattern matches this produces a single long line.
+- Python keywords used as constructor names (`True`, `False`) get a trailing underscore (`True_`, `False_`).
+- Identifiers containing `'` (e.g. `m'`) are sanitized to `m_prime`.
