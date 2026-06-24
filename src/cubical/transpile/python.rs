@@ -407,7 +407,7 @@ pub fn emit_main_driver(
     datatype_info: &HashMap<Name, DatatypeInfo>,
 ) -> String {
     let entry_mod_lower = entry_module.to_lowercase();
-    let (call_expr, extra_imports) =
+    let (call_expr, ret_type, extra_imports) =
         emit_entry_call(entry_module, entry_name, entry_ty, datatype_info);
 
     let mut imports: Vec<String> = extra_imports.iter().map(|s| s.to_lowercase()).collect();
@@ -425,8 +425,25 @@ pub fn emit_main_driver(
     if !imports.is_empty() {
         out.push('\n');
     }
+
+    let is_nat = matches!(&ret_type, Term::TData(name) if name == "Nat");
+
+    if is_nat {
+        out.push_str("def _nat_to_int(n):\n");
+        out.push_str("    if n[0] == \"Zero\":\n");
+        out.push_str("        return 0\n");
+        out.push_str("    if n[0] == \"Suc\":\n");
+        out.push_str("        return 1 + _nat_to_int(n[1])\n");
+        out.push_str("    return n\n");
+        out.push('\n');
+    }
+
     out.push_str("if __name__ == \"__main__\":\n");
-    out.push_str(&format!("    print({})\n", call_expr));
+    if is_nat {
+        out.push_str(&format!("    print(_nat_to_int({}))\n", call_expr));
+    } else {
+        out.push_str(&format!("    print({})\n", call_expr));
+    }
     out
 }
 
@@ -435,10 +452,10 @@ fn emit_entry_call(
     name: &str,
     ty: &Term,
     datatype_info: &HashMap<Name, DatatypeInfo>,
-) -> (String, Vec<String>) {
+) -> (String, Term, Vec<String>) {
     let mut args = Vec::new();
     let mut imports = Vec::new();
-    let mut cur = ty;
+    let mut cur: &Term = ty;
     while let Term::TPi(_, domain, codomain) = cur {
         let (arg, arg_imports) = demo_value(domain, datatype_info);
         args.push(arg);
@@ -453,7 +470,7 @@ fn emit_entry_call(
     }
     imports.sort();
     imports.dedup();
-    (expr, imports)
+    (expr, cur.clone(), imports)
 }
 
 fn demo_value(ty: &Term, datatype_info: &HashMap<Name, DatatypeInfo>) -> (String, Vec<String>) {
