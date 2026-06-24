@@ -1,4 +1,5 @@
 use std::ffi::CString;
+use std::mem::transmute;
 use std::rc::Rc;
 
 use crate::env::{Env, env_set};
@@ -113,146 +114,535 @@ pub fn register_ffi(env: Env, heap: &mut Heap) {
         heap,
         env,
         "ccall".into(),
-        Expr::Func(Rc::new(|args, _heap| {
-            if args.len() < 2 {
-                return Err("ccall: expects at least 2 arguments (fn ptr arg ...)".into());
+        Expr::Func(Rc::new(|args, _heap| ccall_impl(args))),
+    );
+}
+
+// ── Return type ──────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, PartialEq)]
+enum RetType { Int, Float, Void, Ptr }
+
+/// Parse an explicit return-type keyword from `args[1]`.
+/// Returns `(ret_type, arg_offset, was_explicit)`.
+fn parse_ret_type(args: &[Expr]) -> Result<(RetType, usize, bool), String> {
+    if args.len() < 2 {
+        return Ok((RetType::Int, 1, false));
+    }
+    match &args[1] {
+        Expr::Symbol(s) if s == ":int" => Ok((RetType::Int, 2, true)),
+        Expr::Symbol(s) if s == ":float" => Ok((RetType::Float, 2, true)),
+        Expr::Symbol(s) if s == ":void" => Ok((RetType::Void, 2, true)),
+        Expr::Symbol(s) if s == ":ptr" => Ok((RetType::Ptr, 2, true)),
+        _ => Ok((RetType::Int, 1, false)),
+    }
+}
+
+// ── Argument coercions ───────────────────────────────────────────────────────
+
+fn as_i64(e: &Expr) -> Result<i64, String> {
+    match e {
+        Expr::Int(n) => Ok(*n),
+        Expr::Float(f) => Ok(*f as i64),
+        Expr::Bool(b) => Ok(if *b { 1 } else { 0 }),
+        other => Err(format!("ccall: expected numeric value, got {:?}", other)),
+    }
+}
+
+fn as_f64(e: &Expr) -> Result<f64, String> {
+    match e {
+        Expr::Float(f) => Ok(*f),
+        Expr::Int(n) => Ok(*n as f64),
+        Expr::Bool(b) => Ok(if *b { 1.0 } else { 0.0 }),
+        other => Err(format!("ccall: expected numeric value, got {:?}", other)),
+    }
+}
+
+fn cstring_ptr(s: &str, cstrings: &mut Vec<CString>) -> Result<i64, String> {
+    let c = CString::new(s)
+        .map_err(|_| "ccall: string argument contains null byte".to_string())?;
+    let ptr = c.as_ptr() as i64;
+    cstrings.push(c);
+    Ok(ptr)
+}
+
+// ── ccall implementation ─────────────────────────────────────────────────────
+
+fn ccall_impl(args: &[Expr]) -> Result<Expr, String> {
+    if args.is_empty() {
+        return Err("ccall: expects at least 1 argument (function pointer)".into());
+    }
+
+    let fn_ptr = match &args[0] {
+        Expr::Int(n) => *n as *const (),
+        other => {
+            return Err(format!(
+                "ccall: first argument must be a function pointer (integer), got {:?}",
+                other
+            ))
+        }
+    };
+
+    let (ret_type, arg_offset, ret_explicit) = parse_ret_type(args)?;
+    let ncall_args = args.len().checked_sub(arg_offset).unwrap_or(0);
+    if ncall_args > 6 {
+        return Err("ccall: supports at most 6 arguments".into());
+    }
+
+    // ── Marshal arguments into int & float arrays ────────────────────────
+    let mut int_args = [0i64; 6];
+    let mut float_args = [0.0f64; 8];
+    let mut pattern: u8 = 0; // bit i = 1 → arg i is float
+    let mut int_idx = 0usize;
+    let mut float_idx = 0usize;
+    let mut cstrings: Vec<CString> = Vec::new();
+
+    for i in 0..ncall_args {
+        let arg = &args[arg_offset + i];
+
+        // Check for typed arg: (type value) as list
+        let typed = match arg {
+            Expr::List(list) if list.len() == 2 => {
+                if let Expr::Symbol(ty) = &list[0] {
+                    Some((ty.as_str(), &list[1]))
+                } else {
+                    None
+                }
             }
-            let fn_ptr = match &args[0] {
-                Expr::Int(n) => *n as *const (),
+            _ => None,
+        };
+
+        if let Some((type_str, val)) = typed {
+            match type_str {
+                ":int" | ":ptr" => {
+                    int_args[int_idx] = as_i64(val)?;
+                    int_idx += 1;
+                }
+                ":float" => {
+                    float_args[float_idx] = as_f64(val)?;
+                    pattern |= 1 << i;
+                    float_idx += 1;
+                }
+                ":str" | ":string" => {
+                    let s = match val {
+                        Expr::Str(s) => s.as_str(),
+                        Expr::Symbol(s) => s.as_str(),
+                        other => {
+                            return Err(format!(
+                                "ccall: :str arg value must be a string, got {:?}",
+                                other
+                            ))
+                        }
+                    };
+                    int_args[int_idx] = cstring_ptr(s, &mut cstrings)?;
+                    int_idx += 1;
+                }
+                ":bool" => {
+                    let b = match val {
+                        Expr::Bool(b) => *b,
+                        other => {
+                            return Err(format!(
+                                "ccall: :bool arg value must be a bool, got {:?}",
+                                other
+                            ))
+                        }
+                    };
+                    int_args[int_idx] = if b { 1 } else { 0 };
+                    int_idx += 1;
+                }
+                _ => {
+                    return Err(format!("ccall: unknown type specifier {}", type_str))
+                }
+            }
+        } else {
+            // ── Infer type from Expr variant ─────────────────────────────────
+            match arg {
+                Expr::Int(n) => {
+                    int_args[int_idx] = *n;
+                    int_idx += 1;
+                }
+                Expr::Float(f) => {
+                    float_args[float_idx] = *f;
+                    pattern |= 1 << i;
+                    float_idx += 1;
+                }
+                Expr::Bool(b) => {
+                    int_args[int_idx] = if *b { 1 } else { 0 };
+                    int_idx += 1;
+                }
+                Expr::Str(s) => {
+                    int_args[int_idx] = cstring_ptr(s.as_str(), &mut cstrings)?;
+                    int_idx += 1;
+                }
+                Expr::Symbol(s) => {
+                    int_args[int_idx] = cstring_ptr(s.as_str(), &mut cstrings)?;
+                    int_idx += 1;
+                }
                 other => {
                     return Err(format!(
-                        "ccall: first argument must be a function pointer (integer), got {:?}",
+                        "ccall: unsupported argument type: {:?}",
                         other
                     ))
                 }
-            };
-
-            let nargs = args.len() - 1;
-            if nargs > 6 {
-                return Err("ccall: supports at most 6 arguments (SysV ABI limit)".into());
             }
+        }
+    }
 
-            let all_float = args[1..]
-                .iter()
-                .all(|a| matches!(a, Expr::Float(_)));
+    // ── Determine return type ───────────────────────────────────────
+    // When an explicit keyword was given, respect it.
+    // When inferred, backward compat: all-float args → float return, else int return.
+    let (ret_is_float, is_void_ret) = if ret_explicit {
+        match ret_type {
+            RetType::Float => (true, false),
+            RetType::Void => (false, true),
+            RetType::Int | RetType::Ptr => (false, false),
+        }
+    } else if float_idx > 0 && int_idx == 0 {
+        // All arguments are float → infer float return
+        (true, false)
+    } else {
+        (false, false)
+    };
 
-            if all_float {
-                let mut fargs = [0.0f64; 6];
-                for (i, arg) in args[1..].iter().enumerate() {
-                    fargs[i] = match arg {
-                        Expr::Float(f) => *f,
-                        Expr::Int(n) => *n as f64,
-                        other => {
-                            return Err(format!(
-                                "ccall: unsupported argument type in float mode: {:?}",
-                                other
-                            ))
-                        }
-                    };
-                }
-                let result = unsafe {
-                    match nargs {
-                        0 => {
-                            let f: unsafe extern "C" fn() -> f64 = std::mem::transmute(fn_ptr);
-                            f()
-                        }
-                        1 => {
-                            let f: unsafe extern "C" fn(f64) -> f64 = std::mem::transmute(fn_ptr);
-                            f(fargs[0])
-                        }
-                        2 => {
-                            let f: unsafe extern "C" fn(f64, f64) -> f64 =
-                                std::mem::transmute(fn_ptr);
-                            f(fargs[0], fargs[1])
-                        }
-                        3 => {
-                            let f: unsafe extern "C" fn(f64, f64, f64) -> f64 =
-                                std::mem::transmute(fn_ptr);
-                            f(fargs[0], fargs[1], fargs[2])
-                        }
-                        4 => {
-                            let f: unsafe extern "C" fn(f64, f64, f64, f64) -> f64 =
-                                std::mem::transmute(fn_ptr);
-                            f(fargs[0], fargs[1], fargs[2], fargs[3])
-                        }
-                        5 => {
-                            let f: unsafe extern "C" fn(f64, f64, f64, f64, f64) -> f64 =
-                                std::mem::transmute(fn_ptr);
-                            f(fargs[0], fargs[1], fargs[2], fargs[3], fargs[4])
-                        }
-                        6 => {
-                            let f: unsafe extern "C" fn(f64, f64, f64, f64, f64, f64) -> f64 =
-                                std::mem::transmute(fn_ptr);
-                            f(fargs[0], fargs[1], fargs[2], fargs[3], fargs[4], fargs[5])
-                        }
-                        _ => unreachable!(),
-                    }
-                };
-                Ok(Expr::Float(result))
+    // ── Make the call ───────────────────────────────────────────────────
+    unsafe {
+        if ncall_args == 0 {
+            if is_void_ret {
+                let f: unsafe extern "C" fn() = transmute(fn_ptr);
+                f();
+                Ok(Expr::List(vec![]))
+            } else if ret_is_float {
+                let f: unsafe extern "C" fn() -> f64 = transmute(fn_ptr);
+                Ok(Expr::Float(f()))
             } else {
-                let mut iargs = [0i64; 6];
-                for (i, arg) in args[1..].iter().enumerate() {
-                    iargs[i] = match arg {
-                        Expr::Int(n) => *n,
-                        Expr::Float(f) => *f as i64,
-                        Expr::Bool(b) => {
-                            if *b { 1 } else { 0 }
-                        }
-                        Expr::Str(s) => CString::new(s.as_str())
-                            .map_err(|_| "ccall: string arg contains null byte".to_string())
-                            .map(|c| c.into_raw() as i64)?,
-                        Expr::Symbol(s) => CString::new(s.as_str())
-                            .map_err(|_| "ccall: symbol arg contains null byte".to_string())
-                            .map(|c| c.into_raw() as i64)?,
-                        other => {
-                            return Err(format!(
-                                "ccall: unsupported argument type: {:?}",
-                                other
-                            ))
-                        }
-                    };
-                }
-
-                let result = unsafe {
-                    match nargs {
-                        0 => {
-                            let f: unsafe extern "C" fn() -> i64 = std::mem::transmute(fn_ptr);
-                            f()
-                        }
-                        1 => {
-                            let f: unsafe extern "C" fn(i64) -> i64 = std::mem::transmute(fn_ptr);
-                            f(iargs[0])
-                        }
-                        2 => {
-                            let f: unsafe extern "C" fn(i64, i64) -> i64 =
-                                std::mem::transmute(fn_ptr);
-                            f(iargs[0], iargs[1])
-                        }
-                        3 => {
-                            let f: unsafe extern "C" fn(i64, i64, i64) -> i64 =
-                                std::mem::transmute(fn_ptr);
-                            f(iargs[0], iargs[1], iargs[2])
-                        }
-                        4 => {
-                            let f: unsafe extern "C" fn(i64, i64, i64, i64) -> i64 =
-                                std::mem::transmute(fn_ptr);
-                            f(iargs[0], iargs[1], iargs[2], iargs[3])
-                        }
-                        5 => {
-                            let f: unsafe extern "C" fn(i64, i64, i64, i64, i64) -> i64 =
-                                std::mem::transmute(fn_ptr);
-                            f(iargs[0], iargs[1], iargs[2], iargs[3], iargs[4])
-                        }
-                        6 => {
-                            let f: unsafe extern "C" fn(i64, i64, i64, i64, i64, i64) -> i64 =
-                                std::mem::transmute(fn_ptr);
-                            f(iargs[0], iargs[1], iargs[2], iargs[3], iargs[4], iargs[5])
-                        }
-                        _ => unreachable!(),
-                    }
-                };
-                Ok(Expr::Int(result))
+                let f: unsafe extern "C" fn() -> i64 = transmute(fn_ptr);
+                Ok(Expr::Int(f()))
             }
-        })),
-    );
+        } else if float_idx == 0 {
+            call_all_int(fn_ptr, ncall_args, &int_args, ret_is_float, ret_type)
+        } else if int_idx == 0 {
+            call_all_float(fn_ptr, ncall_args, &float_args, ret_is_float, ret_type)
+        } else if ncall_args <= 4 {
+            call_mixed(fn_ptr, ncall_args, pattern, &int_args, &float_args, ret_is_float, ret_type)
+        } else {
+            Err(
+                "ccall: mixed int/float arguments only supported for up to 4 arguments; \
+                 use [:int ...] / [:float ...] type annotations and all-int or all-float \
+                 modes for 5-6 argument calls"
+                    .into(),
+            )
+        }
+    }
+}
+
+// ── All-int dispatch ─────────────────────────────────────────────────────────
+
+fn call_all_int(
+    fn_ptr: *const (),
+    n: usize,
+    iargs: &[i64; 6],
+    ret_float: bool,
+    ret_type: RetType,
+) -> Result<Expr, String> {
+    unsafe {
+        if ret_type == RetType::Void {
+            match n {
+                1 => transmute::<_, extern "C" fn(i64)>(fn_ptr)(iargs[0]),
+                2 => transmute::<_, extern "C" fn(i64, i64)>(fn_ptr)(iargs[0], iargs[1]),
+                3 => transmute::<_, extern "C" fn(i64, i64, i64)>(fn_ptr)(iargs[0], iargs[1], iargs[2]),
+                4 => transmute::<_, extern "C" fn(i64, i64, i64, i64)>(fn_ptr)(iargs[0], iargs[1], iargs[2], iargs[3]),
+                5 => transmute::<_, extern "C" fn(i64, i64, i64, i64, i64)>(fn_ptr)(iargs[0], iargs[1], iargs[2], iargs[3], iargs[4]),
+                6 => transmute::<_, extern "C" fn(i64, i64, i64, i64, i64, i64)>(fn_ptr)(iargs[0], iargs[1], iargs[2], iargs[3], iargs[4], iargs[5]),
+                _ => unreachable!(),
+            }
+            return Ok(Expr::List(vec![]));
+        }
+        let r = match n {
+            1 => transmute::<_, extern "C" fn(i64) -> i64>(fn_ptr)(iargs[0]),
+            2 => transmute::<_, extern "C" fn(i64, i64) -> i64>(fn_ptr)(iargs[0], iargs[1]),
+            3 => transmute::<_, extern "C" fn(i64, i64, i64) -> i64>(fn_ptr)(iargs[0], iargs[1], iargs[2]),
+            4 => transmute::<_, extern "C" fn(i64, i64, i64, i64) -> i64>(fn_ptr)(iargs[0], iargs[1], iargs[2], iargs[3]),
+            5 => transmute::<_, extern "C" fn(i64, i64, i64, i64, i64) -> i64>(fn_ptr)(iargs[0], iargs[1], iargs[2], iargs[3], iargs[4]),
+            6 => transmute::<_, extern "C" fn(i64, i64, i64, i64, i64, i64) -> i64>(fn_ptr)(iargs[0], iargs[1], iargs[2], iargs[3], iargs[4], iargs[5]),
+            _ => unreachable!(),
+        };
+        Ok(if ret_float { Expr::Float(r as f64) } else { Expr::Int(r) })
+    }
+}
+
+// ── All-float dispatch ───────────────────────────────────────────────────────
+
+fn call_all_float(
+    fn_ptr: *const (),
+    n: usize,
+    fargs: &[f64; 8],
+    ret_float: bool,
+    ret_type: RetType,
+) -> Result<Expr, String> {
+    unsafe {
+        if ret_type == RetType::Void {
+            match n {
+                1 => transmute::<_, extern "C" fn(f64)>(fn_ptr)(fargs[0]),
+                2 => transmute::<_, extern "C" fn(f64, f64)>(fn_ptr)(fargs[0], fargs[1]),
+                3 => transmute::<_, extern "C" fn(f64, f64, f64)>(fn_ptr)(fargs[0], fargs[1], fargs[2]),
+                4 => transmute::<_, extern "C" fn(f64, f64, f64, f64)>(fn_ptr)(fargs[0], fargs[1], fargs[2], fargs[3]),
+                5 => transmute::<_, extern "C" fn(f64, f64, f64, f64, f64)>(fn_ptr)(fargs[0], fargs[1], fargs[2], fargs[3], fargs[4]),
+                6 => transmute::<_, extern "C" fn(f64, f64, f64, f64, f64, f64)>(fn_ptr)(fargs[0], fargs[1], fargs[2], fargs[3], fargs[4], fargs[5]),
+                _ => unreachable!(),
+            }
+            return Ok(Expr::List(vec![]));
+        }
+        if ret_float {
+            let r = match n {
+                1 => transmute::<_, extern "C" fn(f64) -> f64>(fn_ptr)(fargs[0]),
+                2 => transmute::<_, extern "C" fn(f64, f64) -> f64>(fn_ptr)(fargs[0], fargs[1]),
+                3 => transmute::<_, extern "C" fn(f64, f64, f64) -> f64>(fn_ptr)(fargs[0], fargs[1], fargs[2]),
+                4 => transmute::<_, extern "C" fn(f64, f64, f64, f64) -> f64>(fn_ptr)(fargs[0], fargs[1], fargs[2], fargs[3]),
+                5 => transmute::<_, extern "C" fn(f64, f64, f64, f64, f64) -> f64>(fn_ptr)(fargs[0], fargs[1], fargs[2], fargs[3], fargs[4]),
+                6 => transmute::<_, extern "C" fn(f64, f64, f64, f64, f64, f64) -> f64>(fn_ptr)(fargs[0], fargs[1], fargs[2], fargs[3], fargs[4], fargs[5]),
+                _ => unreachable!(),
+            };
+            Ok(Expr::Float(r))
+        } else {
+            let r = match n {
+                1 => transmute::<_, extern "C" fn(f64) -> i64>(fn_ptr)(fargs[0]),
+                2 => transmute::<_, extern "C" fn(f64, f64) -> i64>(fn_ptr)(fargs[0], fargs[1]),
+                3 => transmute::<_, extern "C" fn(f64, f64, f64) -> i64>(fn_ptr)(fargs[0], fargs[1], fargs[2]),
+                4 => transmute::<_, extern "C" fn(f64, f64, f64, f64) -> i64>(fn_ptr)(fargs[0], fargs[1], fargs[2], fargs[3]),
+                5 => transmute::<_, extern "C" fn(f64, f64, f64, f64, f64) -> i64>(fn_ptr)(fargs[0], fargs[1], fargs[2], fargs[3], fargs[4]),
+                6 => transmute::<_, extern "C" fn(f64, f64, f64, f64, f64, f64) -> i64>(fn_ptr)(fargs[0], fargs[1], fargs[2], fargs[3], fargs[4], fargs[5]),
+                _ => unreachable!(),
+            };
+            Ok(Expr::Int(r))
+        }
+    }
+}
+
+// ── Mixed-type dispatch (1–4 args, ABI-correct across all platforms) ───────
+// Each argument is independently classified as INTEGER (i64) or SSE (f64).
+// Bit `i` of `pattern` is 1 when argument `i` is float.
+// int_args / float_args hold the marshaled values in encounter order.
+//
+// Rust's `extern "C" fn(…)` generates the correct per-architecture ABI for
+// the exact argument type sequence — so a transmute to a function signature
+// matching the C function's actual prototype will pass each argument in the
+// correct register or stack slot on any platform.
+
+fn call_mixed(
+    fn_ptr: *const (),
+    n: usize,
+    pattern: u8,
+    iargs: &[i64; 6],
+    fargs: &[f64; 8],
+    ret_float: bool,
+    ret_type: RetType,
+) -> Result<Expr, String> {
+    // Handle void return at the top so the per-arity functions are simpler.
+    if ret_type == RetType::Void {
+        unsafe {
+            match n {
+                1 => call_mixed_void_1(fn_ptr, pattern, iargs, fargs),
+                2 => call_mixed_void_2(fn_ptr, pattern, iargs, fargs),
+                3 => call_mixed_void_3(fn_ptr, pattern, iargs, fargs),
+                4 => call_mixed_void_4(fn_ptr, pattern, iargs, fargs),
+                _ => unreachable!(),
+            }
+        }
+        return Ok(Expr::List(vec![]));
+    }
+    unsafe {
+        match n {
+            1 => call_mixed_1(fn_ptr, pattern, iargs, fargs, ret_float),
+            2 => call_mixed_2(fn_ptr, pattern, iargs, fargs, ret_float),
+            3 => call_mixed_3(fn_ptr, pattern, iargs, fargs, ret_float),
+            4 => call_mixed_4(fn_ptr, pattern, iargs, fargs, ret_float),
+            _ => unreachable!(),
+        }
+    }
+}
+
+// ── Void mixed helpers ───────────────────────────────────────────────────────
+
+fn call_mixed_void_1(
+    fn_ptr: *const (), pattern: u8,
+    iargs: &[i64; 6], fargs: &[f64; 8],
+) {
+    unsafe {
+        match pattern & 1 {
+            0 => transmute::<_, extern "C" fn(i64)>(fn_ptr)(iargs[0]),
+            1 => transmute::<_, extern "C" fn(f64)>(fn_ptr)(fargs[0]),
+            _ => unreachable!(),
+        }
+    }
+}
+
+fn call_mixed_void_2(
+    fn_ptr: *const (), pattern: u8,
+    iargs: &[i64; 6], fargs: &[f64; 8],
+) {
+    unsafe {
+        match pattern & 3 {
+            0b00 => transmute::<_, extern "C" fn(i64, i64)>(fn_ptr)(iargs[0], iargs[1]),
+            0b01 => transmute::<_, extern "C" fn(f64, i64)>(fn_ptr)(fargs[0], iargs[0]),
+            0b10 => transmute::<_, extern "C" fn(i64, f64)>(fn_ptr)(iargs[0], fargs[0]),
+            0b11 => transmute::<_, extern "C" fn(f64, f64)>(fn_ptr)(fargs[0], fargs[1]),
+            _ => unreachable!(),
+        }
+    }
+}
+
+fn call_mixed_void_3(
+    fn_ptr: *const (), pattern: u8,
+    iargs: &[i64; 6], fargs: &[f64; 8],
+) {
+    unsafe {
+        match pattern & 7 {
+            0b000 => transmute::<_, extern "C" fn(i64, i64, i64)>(fn_ptr)(iargs[0], iargs[1], iargs[2]),
+            0b001 => transmute::<_, extern "C" fn(f64, i64, i64)>(fn_ptr)(fargs[0], iargs[0], iargs[1]),
+            0b010 => transmute::<_, extern "C" fn(i64, f64, i64)>(fn_ptr)(iargs[0], fargs[0], iargs[1]),
+            0b011 => transmute::<_, extern "C" fn(f64, f64, i64)>(fn_ptr)(fargs[0], fargs[1], iargs[0]),
+            0b100 => transmute::<_, extern "C" fn(i64, i64, f64)>(fn_ptr)(iargs[0], iargs[1], fargs[0]),
+            0b101 => transmute::<_, extern "C" fn(f64, i64, f64)>(fn_ptr)(fargs[0], iargs[0], fargs[1]),
+            0b110 => transmute::<_, extern "C" fn(i64, f64, f64)>(fn_ptr)(iargs[0], fargs[0], fargs[1]),
+            0b111 => transmute::<_, extern "C" fn(f64, f64, f64)>(fn_ptr)(fargs[0], fargs[1], fargs[2]),
+            _ => unreachable!(),
+        }
+    }
+}
+
+fn call_mixed_void_4(
+    fn_ptr: *const (), pattern: u8,
+    iargs: &[i64; 6], fargs: &[f64; 8],
+) {
+    unsafe {
+        match pattern & 15 {
+            0b0000 => transmute::<_, extern "C" fn(i64, i64, i64, i64)>(fn_ptr)(iargs[0], iargs[1], iargs[2], iargs[3]),
+            0b0001 => transmute::<_, extern "C" fn(f64, i64, i64, i64)>(fn_ptr)(fargs[0], iargs[0], iargs[1], iargs[2]),
+            0b0010 => transmute::<_, extern "C" fn(i64, f64, i64, i64)>(fn_ptr)(iargs[0], fargs[0], iargs[1], iargs[2]),
+            0b0011 => transmute::<_, extern "C" fn(f64, f64, i64, i64)>(fn_ptr)(fargs[0], fargs[1], iargs[0], iargs[1]),
+            0b0100 => transmute::<_, extern "C" fn(i64, i64, f64, i64)>(fn_ptr)(iargs[0], iargs[1], fargs[0], iargs[2]),
+            0b0101 => transmute::<_, extern "C" fn(f64, i64, f64, i64)>(fn_ptr)(fargs[0], iargs[0], fargs[1], iargs[1]),
+            0b0110 => transmute::<_, extern "C" fn(i64, f64, f64, i64)>(fn_ptr)(iargs[0], fargs[0], fargs[1], iargs[1]),
+            0b0111 => transmute::<_, extern "C" fn(f64, f64, f64, i64)>(fn_ptr)(fargs[0], fargs[1], fargs[2], iargs[0]),
+            0b1000 => transmute::<_, extern "C" fn(i64, i64, i64, f64)>(fn_ptr)(iargs[0], iargs[1], iargs[2], fargs[0]),
+            0b1001 => transmute::<_, extern "C" fn(f64, i64, i64, f64)>(fn_ptr)(fargs[0], iargs[0], iargs[1], fargs[1]),
+            0b1010 => transmute::<_, extern "C" fn(i64, f64, i64, f64)>(fn_ptr)(iargs[0], fargs[0], iargs[1], fargs[1]),
+            0b1011 => transmute::<_, extern "C" fn(f64, f64, i64, f64)>(fn_ptr)(fargs[0], fargs[1], iargs[0], fargs[2]),
+            0b1100 => transmute::<_, extern "C" fn(i64, i64, f64, f64)>(fn_ptr)(iargs[0], iargs[1], fargs[0], fargs[1]),
+            0b1101 => transmute::<_, extern "C" fn(f64, i64, f64, f64)>(fn_ptr)(fargs[0], iargs[0], fargs[1], fargs[2]),
+            0b1110 => transmute::<_, extern "C" fn(i64, f64, f64, f64)>(fn_ptr)(iargs[0], fargs[0], fargs[1], fargs[2]),
+            0b1111 => transmute::<_, extern "C" fn(f64, f64, f64, f64)>(fn_ptr)(fargs[0], fargs[1], fargs[2], fargs[3]),
+            _ => unreachable!(),
+        }
+    }
+}
+
+// ── Mixed returning helpers ──────────────────────────────────────────────────
+
+fn call_mixed_1(
+    fn_ptr: *const (), pattern: u8,
+    iargs: &[i64; 6], fargs: &[f64; 8],
+    ret_float: bool,
+) -> Result<Expr, String> {
+    unsafe {
+        match (pattern & 1, ret_float) {
+            (0, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(i64) -> i64>(fn_ptr)(iargs[0]))),
+            (0, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(i64) -> f64>(fn_ptr)(iargs[0]))),
+            (1, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(f64) -> i64>(fn_ptr)(fargs[0]))),
+            (1, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(f64) -> f64>(fn_ptr)(fargs[0]))),
+            _ => unreachable!(),
+        }
+    }
+}
+
+fn call_mixed_2(
+    fn_ptr: *const (), pattern: u8,
+    iargs: &[i64; 6], fargs: &[f64; 8],
+    ret_float: bool,
+) -> Result<Expr, String> {
+    unsafe {
+        match (pattern & 3, ret_float) {
+            (0b00, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(i64, i64) -> i64>(fn_ptr)(iargs[0], iargs[1]))),
+            (0b00, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(i64, i64) -> f64>(fn_ptr)(iargs[0], iargs[1]))),
+            (0b01, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(f64, i64) -> i64>(fn_ptr)(fargs[0], iargs[0]))),
+            (0b01, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(f64, i64) -> f64>(fn_ptr)(fargs[0], iargs[0]))),
+            (0b10, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(i64, f64) -> i64>(fn_ptr)(iargs[0], fargs[0]))),
+            (0b10, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(i64, f64) -> f64>(fn_ptr)(iargs[0], fargs[0]))),
+            (0b11, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(f64, f64) -> i64>(fn_ptr)(fargs[0], fargs[1]))),
+            (0b11, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(f64, f64) -> f64>(fn_ptr)(fargs[0], fargs[1]))),
+            _ => unreachable!(),
+        }
+    }
+}
+
+fn call_mixed_3(
+    fn_ptr: *const (), pattern: u8,
+    iargs: &[i64; 6], fargs: &[f64; 8],
+    ret_float: bool,
+) -> Result<Expr, String> {
+    unsafe {
+        match (pattern & 7, ret_float) {
+            (0b000, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(i64, i64, i64) -> i64>(fn_ptr)(iargs[0], iargs[1], iargs[2]))),
+            (0b000, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(i64, i64, i64) -> f64>(fn_ptr)(iargs[0], iargs[1], iargs[2]))),
+            (0b001, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(f64, i64, i64) -> i64>(fn_ptr)(fargs[0], iargs[0], iargs[1]))),
+            (0b001, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(f64, i64, i64) -> f64>(fn_ptr)(fargs[0], iargs[0], iargs[1]))),
+            (0b010, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(i64, f64, i64) -> i64>(fn_ptr)(iargs[0], fargs[0], iargs[1]))),
+            (0b010, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(i64, f64, i64) -> f64>(fn_ptr)(iargs[0], fargs[0], iargs[1]))),
+            (0b011, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(f64, f64, i64) -> i64>(fn_ptr)(fargs[0], fargs[1], iargs[0]))),
+            (0b011, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(f64, f64, i64) -> f64>(fn_ptr)(fargs[0], fargs[1], iargs[0]))),
+            (0b100, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(i64, i64, f64) -> i64>(fn_ptr)(iargs[0], iargs[1], fargs[0]))),
+            (0b100, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(i64, i64, f64) -> f64>(fn_ptr)(iargs[0], iargs[1], fargs[0]))),
+            (0b101, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(f64, i64, f64) -> i64>(fn_ptr)(fargs[0], iargs[0], fargs[1]))),
+            (0b101, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(f64, i64, f64) -> f64>(fn_ptr)(fargs[0], iargs[0], fargs[1]))),
+            (0b110, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(i64, f64, f64) -> i64>(fn_ptr)(iargs[0], fargs[0], fargs[1]))),
+            (0b110, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(i64, f64, f64) -> f64>(fn_ptr)(iargs[0], fargs[0], fargs[1]))),
+            (0b111, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(f64, f64, f64) -> i64>(fn_ptr)(fargs[0], fargs[1], fargs[2]))),
+            (0b111, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(f64, f64, f64) -> f64>(fn_ptr)(fargs[0], fargs[1], fargs[2]))),
+            _ => unreachable!(),
+        }
+    }
+}
+
+fn call_mixed_4(
+    fn_ptr: *const (), pattern: u8,
+    iargs: &[i64; 6], fargs: &[f64; 8],
+    ret_float: bool,
+) -> Result<Expr, String> {
+    unsafe {
+        match (pattern & 15, ret_float) {
+            (0b0000, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(i64, i64, i64, i64) -> i64>(fn_ptr)(iargs[0], iargs[1], iargs[2], iargs[3]))),
+            (0b0000, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(i64, i64, i64, i64) -> f64>(fn_ptr)(iargs[0], iargs[1], iargs[2], iargs[3]))),
+            (0b0001, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(f64, i64, i64, i64) -> i64>(fn_ptr)(fargs[0], iargs[0], iargs[1], iargs[2]))),
+            (0b0001, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(f64, i64, i64, i64) -> f64>(fn_ptr)(fargs[0], iargs[0], iargs[1], iargs[2]))),
+            (0b0010, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(i64, f64, i64, i64) -> i64>(fn_ptr)(iargs[0], fargs[0], iargs[1], iargs[2]))),
+            (0b0010, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(i64, f64, i64, i64) -> f64>(fn_ptr)(iargs[0], fargs[0], iargs[1], iargs[2]))),
+            (0b0011, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(f64, f64, i64, i64) -> i64>(fn_ptr)(fargs[0], fargs[1], iargs[0], iargs[1]))),
+            (0b0011, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(f64, f64, i64, i64) -> f64>(fn_ptr)(fargs[0], fargs[1], iargs[0], iargs[1]))),
+            (0b0100, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(i64, i64, f64, i64) -> i64>(fn_ptr)(iargs[0], iargs[1], fargs[0], iargs[2]))),
+            (0b0100, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(i64, i64, f64, i64) -> f64>(fn_ptr)(iargs[0], iargs[1], fargs[0], iargs[2]))),
+            (0b0101, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(f64, i64, f64, i64) -> i64>(fn_ptr)(fargs[0], iargs[0], fargs[1], iargs[1]))),
+            (0b0101, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(f64, i64, f64, i64) -> f64>(fn_ptr)(fargs[0], iargs[0], fargs[1], iargs[1]))),
+            (0b0110, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(i64, f64, f64, i64) -> i64>(fn_ptr)(iargs[0], fargs[0], fargs[1], iargs[1]))),
+            (0b0110, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(i64, f64, f64, i64) -> f64>(fn_ptr)(iargs[0], fargs[0], fargs[1], iargs[1]))),
+            (0b0111, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(f64, f64, f64, i64) -> i64>(fn_ptr)(fargs[0], fargs[1], fargs[2], iargs[0]))),
+            (0b0111, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(f64, f64, f64, i64) -> f64>(fn_ptr)(fargs[0], fargs[1], fargs[2], iargs[0]))),
+            (0b1000, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(i64, i64, i64, f64) -> i64>(fn_ptr)(iargs[0], iargs[1], iargs[2], fargs[0]))),
+            (0b1000, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(i64, i64, i64, f64) -> f64>(fn_ptr)(iargs[0], iargs[1], iargs[2], fargs[0]))),
+            (0b1001, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(f64, i64, i64, f64) -> i64>(fn_ptr)(fargs[0], iargs[0], iargs[1], fargs[1]))),
+            (0b1001, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(f64, i64, i64, f64) -> f64>(fn_ptr)(fargs[0], iargs[0], iargs[1], fargs[1]))),
+            (0b1010, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(i64, f64, i64, f64) -> i64>(fn_ptr)(iargs[0], fargs[0], iargs[1], fargs[1]))),
+            (0b1010, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(i64, f64, i64, f64) -> f64>(fn_ptr)(iargs[0], fargs[0], iargs[1], fargs[1]))),
+            (0b1011, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(f64, f64, i64, f64) -> i64>(fn_ptr)(fargs[0], fargs[1], iargs[0], fargs[2]))),
+            (0b1011, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(f64, f64, i64, f64) -> f64>(fn_ptr)(fargs[0], fargs[1], iargs[0], fargs[2]))),
+            (0b1100, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(i64, i64, f64, f64) -> i64>(fn_ptr)(iargs[0], iargs[1], fargs[0], fargs[1]))),
+            (0b1100, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(i64, i64, f64, f64) -> f64>(fn_ptr)(iargs[0], iargs[1], fargs[0], fargs[1]))),
+            (0b1101, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(f64, i64, f64, f64) -> i64>(fn_ptr)(fargs[0], iargs[0], fargs[1], fargs[2]))),
+            (0b1101, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(f64, i64, f64, f64) -> f64>(fn_ptr)(fargs[0], iargs[0], fargs[1], fargs[2]))),
+            (0b1110, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(i64, f64, f64, f64) -> i64>(fn_ptr)(iargs[0], fargs[0], fargs[1], fargs[2]))),
+            (0b1110, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(i64, f64, f64, f64) -> f64>(fn_ptr)(iargs[0], fargs[0], fargs[1], fargs[2]))),
+            (0b1111, false) => Ok(Expr::Int(transmute::<_, extern "C" fn(f64, f64, f64, f64) -> i64>(fn_ptr)(fargs[0], fargs[1], fargs[2], fargs[3]))),
+            (0b1111, true)  => Ok(Expr::Float(transmute::<_, extern "C" fn(f64, f64, f64, f64) -> f64>(fn_ptr)(fargs[0], fargs[1], fargs[2], fargs[3]))),
+            _ => unreachable!(),
+        }
+    }
 }
