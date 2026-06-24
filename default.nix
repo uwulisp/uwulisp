@@ -4,7 +4,7 @@
 
 pkgs.rustPlatform.buildRustPackage rec {
   pname = "pi-lisp";
-  version = "1.8.0";
+  version = "1.9.0";
 
   # The source directory of the project
   src = ./.;
