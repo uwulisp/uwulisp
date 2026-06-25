@@ -19,6 +19,11 @@ const RTLD_NOW: i32 = 2;
 #[cfg(not(target_family = "unix"))]
 pub fn register_ffi(_env: Env, _heap: &mut Heap) {}
 
+#[cfg(not(target_family = "unix"))]
+pub(crate) fn ccall_impl(_args: &[Expr]) -> Result<Expr, String> {
+    Err("ccall is only supported on Unix".into())
+}
+
 #[cfg(target_family = "unix")]
 pub fn register_ffi(env: Env, heap: &mut Heap) {
     env_set(
@@ -116,6 +121,218 @@ pub fn register_ffi(env: Env, heap: &mut Heap) {
         "ccall".into(),
         Expr::Func(Rc::new(|args, _heap| ccall_impl(args))),
     );
+
+    // ── Memory primitives ──────────────────────────────────────────────────────
+    //
+    // These let users allocate, read, and write raw C-compatible memory,
+    // enabling struct interop via `defstruct` + `ccall`.
+
+    env_set(
+        heap,
+        env,
+        "malloc".into(),
+        Expr::Func(Rc::new(|args, _heap| {
+            if args.len() != 1 {
+                return Err("malloc: expects 1 argument (size in bytes)".into());
+            }
+            let size = match &args[0] {
+                Expr::Int(n) => *n,
+                other => return Err(format!("malloc: size must be an integer, got {:?}", other)),
+            };
+            if size <= 0 {
+                return Err("malloc: size must be positive".into());
+            }
+            let ptr = unsafe { libc::malloc(size as usize) };
+            if ptr.is_null() {
+                return Err("malloc: allocation failed".into());
+            }
+            Ok(Expr::Int(ptr as i64))
+        })),
+    );
+
+    env_set(
+        heap,
+        env,
+        "free".into(),
+        Expr::Func(Rc::new(|args, _heap| {
+            if args.len() != 1 {
+                return Err("free: expects 1 argument (pointer)".into());
+            }
+            let ptr = match &args[0] {
+                Expr::Int(n) => *n as *mut libc::c_void,
+                other => return Err(format!("free: pointer must be an integer, got {:?}", other)),
+            };
+            unsafe { libc::free(ptr) };
+            Ok(Expr::List(vec![]))
+        })),
+    );
+
+    env_set(
+        heap,
+        env,
+        "mem-ref".into(),
+        Expr::Func(Rc::new(|args, _heap| mem_ref_impl(args))),
+    );
+
+    env_set(
+        heap,
+        env,
+        "mem-set!".into(),
+        Expr::Func(Rc::new(|args, _heap| mem_set_impl(args))),
+    );
+}
+
+// ── mem-ref implementation ─────────────────────────────────────────────────────
+
+/// Read a value from raw memory: `(mem-ref ptr offset type)`.
+fn mem_ref_impl(args: &[Expr]) -> Result<Expr, String> {
+    if args.len() != 3 {
+        return Err("mem-ref: expects 3 arguments (ptr offset type)".into());
+    }
+    let ptr = match &args[0] {
+        Expr::Int(n) => *n as *const u8,
+        other => return Err(format!("mem-ref: ptr must be an integer, got {:?}", other)),
+    };
+    let offset = match &args[1] {
+        Expr::Int(n) => *n as usize,
+        other => return Err(format!("mem-ref: offset must be an integer, got {:?}", other)),
+    };
+    let type_sym = match &args[2] {
+        Expr::Symbol(s) => s.as_str(),
+        other => return Err(format!("mem-ref: type must be a symbol, got {:?}", other)),
+    };
+
+    let addr = unsafe { ptr.add(offset) };
+
+    match type_sym {
+        ":int8" | ":i8" => {
+            let val = unsafe { std::ptr::read_unaligned(addr as *const i8) };
+            Ok(Expr::Int(val as i64))
+        }
+        ":uint8" | ":u8" => {
+            let val = unsafe { std::ptr::read_unaligned(addr as *const u8) };
+            Ok(Expr::Int(val as i64))
+        }
+        ":int16" | ":i16" => {
+            let val = unsafe { std::ptr::read_unaligned(addr as *const i16) };
+            Ok(Expr::Int(val as i64))
+        }
+        ":uint16" | ":u16" => {
+            let val = unsafe { std::ptr::read_unaligned(addr as *const u16) };
+            Ok(Expr::Int(val as i64))
+        }
+        ":int32" | ":i32" | ":int" => {
+            let val = unsafe { std::ptr::read_unaligned(addr as *const i32) };
+            Ok(Expr::Int(val as i64))
+        }
+        ":uint32" | ":u32" => {
+            let val = unsafe { std::ptr::read_unaligned(addr as *const u32) };
+            Ok(Expr::Int(val as i64))
+        }
+        ":int64" | ":i64" => {
+            let val = unsafe { std::ptr::read_unaligned(addr as *const i64) };
+            Ok(Expr::Int(val))
+        }
+        ":uint64" | ":u64" => {
+            let val = unsafe { std::ptr::read_unaligned(addr as *const u64) };
+            Ok(Expr::Int(val as i64))
+        }
+        ":float" | ":f32" => {
+            let val = unsafe { std::ptr::read_unaligned(addr as *const f32) };
+            Ok(Expr::Float(val as f64))
+        }
+        ":double" | ":f64" | ":float64" => {
+            let val = unsafe { std::ptr::read_unaligned(addr as *const f64) };
+            Ok(Expr::Float(val))
+        }
+        ":ptr" => {
+            let val = unsafe { std::ptr::read_unaligned(addr as *const *const u8) };
+            Ok(Expr::Int(val as i64))
+        }
+        other => Err(format!("mem-ref: unknown type '{}'", other)),
+    }
+}
+
+// ── mem-set! implementation ────────────────────────────────────────────────────
+
+/// Write a value to raw memory: `(mem-set! ptr offset type value)`.
+fn mem_set_impl(args: &[Expr]) -> Result<Expr, String> {
+    if args.len() != 4 {
+        return Err("mem-set!: expects 4 arguments (ptr offset type value)".into());
+    }
+    let ptr = match &args[0] {
+        Expr::Int(n) => *n as *mut u8,
+        other => return Err(format!("mem-set!: ptr must be an integer, got {:?}", other)),
+    };
+    let offset = match &args[1] {
+        Expr::Int(n) => *n as usize,
+        other => return Err(format!("mem-set!: offset must be an integer, got {:?}", other)),
+    };
+    let type_sym = match &args[2] {
+        Expr::Symbol(s) => s.as_str(),
+        other => return Err(format!("mem-set!: type must be a symbol, got {:?}", other)),
+    };
+
+    let addr = unsafe { ptr.add(offset) };
+
+    match type_sym {
+        ":int8" | ":i8" => {
+            let val = as_i64(&args[3])? as i8;
+            unsafe { std::ptr::write_unaligned(addr as *mut i8, val) };
+            Ok(Expr::List(vec![]))
+        }
+        ":uint8" | ":u8" => {
+            let val = as_i64(&args[3])? as u8;
+            unsafe { std::ptr::write_unaligned(addr as *mut u8, val) };
+            Ok(Expr::List(vec![]))
+        }
+        ":int16" | ":i16" => {
+            let val = as_i64(&args[3])? as i16;
+            unsafe { std::ptr::write_unaligned(addr as *mut i16, val) };
+            Ok(Expr::List(vec![]))
+        }
+        ":uint16" | ":u16" => {
+            let val = as_i64(&args[3])? as u16;
+            unsafe { std::ptr::write_unaligned(addr as *mut u16, val) };
+            Ok(Expr::List(vec![]))
+        }
+        ":int32" | ":i32" | ":int" => {
+            let val = as_i64(&args[3])? as i32;
+            unsafe { std::ptr::write_unaligned(addr as *mut i32, val) };
+            Ok(Expr::List(vec![]))
+        }
+        ":uint32" | ":u32" => {
+            let val = as_i64(&args[3])? as u32;
+            unsafe { std::ptr::write_unaligned(addr as *mut u32, val) };
+            Ok(Expr::List(vec![]))
+        }
+        ":int64" | ":i64" => {
+            let val = as_i64(&args[3])?;
+            unsafe { std::ptr::write_unaligned(addr as *mut i64, val) };
+            Ok(Expr::List(vec![]))
+        }
+        ":uint64" | ":u64" => {
+            let val = as_i64(&args[3])? as u64;
+            unsafe { std::ptr::write_unaligned(addr as *mut u64, val) };
+            Ok(Expr::List(vec![]))
+        }
+        ":float" | ":f32" => {
+            let val = as_f64(&args[3])? as f32;
+            unsafe { std::ptr::write_unaligned(addr as *mut f32, val) };
+            Ok(Expr::List(vec![]))
+        }
+        ":double" | ":f64" | ":float64" => {
+            let val = as_f64(&args[3])?;
+            unsafe { std::ptr::write_unaligned(addr as *mut f64, val) };
+            Ok(Expr::List(vec![]))
+        }
+        ":ptr" => {
+            let val = as_i64(&args[3])? as *mut u8;
+            unsafe { std::ptr::write_unaligned(addr as *mut *mut u8, val) };
+            Ok(Expr::List(vec![]))
+        }
+        other => Err(format!("mem-set!: unknown type '{}'", other)),
+    }
 }
 
 // ── Return type ──────────────────────────────────────────────────────────────
@@ -168,7 +385,7 @@ fn cstring_ptr(s: &str, cstrings: &mut Vec<CString>) -> Result<i64, String> {
 
 // ── ccall implementation ─────────────────────────────────────────────────────
 
-fn ccall_impl(args: &[Expr]) -> Result<Expr, String> {
+pub(crate) fn ccall_impl(args: &[Expr]) -> Result<Expr, String> {
     if args.is_empty() {
         return Err("ccall: expects at least 1 argument (function pointer)".into());
     }

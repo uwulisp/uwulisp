@@ -1,11 +1,14 @@
-use crate::env::{Env, env_get, env_set, new_env};
-use crate::expr::{Expr, is_truthy};
-use crate::gc::Heap;
-use crate::macros::{eval_quasiquote, expand_macro};
-use crate::reader::{parse_all, parse_params};
 use std::cell::RefCell;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+use crate::env::{Env, env_get, env_set, new_env};
+use crate::expr::{Expr, is_truthy};
+use crate::builtins::cffi::ccall_impl;
+use crate::gc::Heap;
+use crate::macros::{eval_quasiquote, expand_macro};
+use crate::reader::{parse_all, parse_params};
 
 // How many live heap slots we allow before triggering a collection inside
 // `apply`.  Tune this to trade GC frequency against peak memory use.
@@ -182,6 +185,8 @@ fn eval_step(expr: &Expr, env: Env, heap: &mut Heap) -> Result<Step, String> {
                     "let" => return eval_let(list, env, heap),
                     "let*" => return eval_let_star(list, env, heap),
                     "for" => return eval_for(list, env, heap),
+                    "defstruct" => return Ok(Step::Value(eval_defstruct(list, env, heap)?)),
+                    "ccall" => return Ok(Step::Value(eval_ccall(list, env, heap)?)),
 
                     // ── explicit tail-call form ────────────────────────────
                     //
@@ -580,6 +585,157 @@ fn eval_for(list: &[Expr], env: Env, heap: &mut Heap) -> Result<Step, String> {
     }
 
     Ok(Step::Value(Expr::List(vec![])))
+}
+
+// ── defstruct ──────────────────────────────────────────────────────────────────
+
+/// `(defstruct name field...)`
+///
+/// Defines a C-like struct type. Creates:
+///   - `(name field-val...)` — positiona lconstructor
+///   - `(name? obj)`         — type predicate
+///   - `(name-field obj)`    — accessor for each field
+///
+/// Struct instances are intern ally represented as tagged lists:
+/// `(struct name val1 val2 ...)`.
+fn eval_defstruct(list: &[Expr], env: Env, heap: &mut Heap) -> Result<Expr, String> {
+    if list.len() < 3 {
+        return Err(format!(
+            "defstruct expects at least 2 arguments (name field...), got {}",
+            list.len() - 1
+        ));
+    }
+
+    let struct_name = match &list[1] {
+        Expr::Symbol(s) => s.clone(),
+        other => {
+            return Err(format!(
+                "defstruct: struct name must be a symbol, got {:?}",
+                other
+            ));
+        }
+    };
+
+    let fields: Vec<String> = list[2..]
+        .iter()
+        .map(|e| match e {
+            Expr::Symbol(s) => Ok(s.clone()),
+            other => Err(format!(
+                "defstruct: field name must be a symbol, got {:?}",
+                other
+            )),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let field_count = fields.len();
+
+    // ── Constructor: (point x y) ────────────────────────────────────────────
+    let ctor_name = struct_name.clone();
+    let constructor = Expr::Func(Rc::new(move |args, _heap| {
+        if args.len() != field_count {
+            return Err(format!(
+                "{} constructor expects {} argument(s), got {}",
+                ctor_name, field_count, args.len()
+            ));
+        }
+        let mut vals = vec![
+            Expr::Symbol("struct".into()),
+            Expr::Symbol(ctor_name.clone()),
+        ];
+        vals.extend(args.iter().cloned());
+        Ok(Expr::List(vals))
+    }));
+    env_set(heap, env, struct_name.clone(), constructor);
+
+    // ── Predicate: (point? obj) ─────────────────────────────────────────────
+    let pred_name = format!("{}?", struct_name);
+    let pred_sname = struct_name.clone();
+    env_set(
+        heap,
+        env,
+        pred_name,
+        Expr::Func(Rc::new(move |args, _heap| {
+            if args.len() != 1 {
+                return Err("struct predicate expects 1 argument".into());
+            }
+            Ok(Expr::Bool(matches!(&args[0],
+                Expr::List(l) if l.len() >= 2
+                    && matches!(&l[0], Expr::Symbol(s) if s == "struct")
+                    && matches!(&l[1], Expr::Symbol(s) if *s == pred_sname)
+            )))
+        })),
+    );
+
+    // ── Accessors: (point-x obj), (point-y obj), ... ───────────────────────
+    for (i, field) in fields.iter().enumerate() {
+        let acc_name = format!("{}-{}", struct_name, field);
+        let acc_sname = struct_name.clone();
+        let acc_field = field.clone();
+        env_set(
+            heap,
+            env,
+            acc_name,
+            Expr::Func(Rc::new(move |args, _heap| {
+                if args.len() != 1 {
+                    return Err(format!(
+                        "{}-{} expects 1 argument, got {}",
+                        acc_sname, acc_field, args.len()
+                    ));
+                }
+                match &args[0] {
+                    Expr::List(l)
+                        if l.len() >= 2 + i
+                            && matches!(&l[0], Expr::Symbol(s) if s == "struct")
+                            && matches!(&l[1], Expr::Symbol(s) if *s == acc_sname) =>
+                    {
+                        Ok(l[2 + i].clone())
+                    }
+                    other => Err(format!(
+                        "{}-{}: not a {} struct, got {:?}",
+                        acc_sname, acc_field, acc_sname, other
+                    )),
+                }
+            })),
+        );
+    }
+
+    Ok(Expr::List(vec![]))
+}
+
+// ── ccall special form ─────────────────────────────────────────────────────────
+//
+// `ccall` is a special form because its typed argument pairs like `(:ptr p)`
+// must NOT be evaluated as a function application — the type keyword (`:ptr`)
+// is metadata, not a function to call.
+//
+// `eval_ccall` manually evaluates each value expression and reconstructs the
+// argument list with the type keywords intact, then delegates to `ccall_impl`.
+
+fn eval_ccall(list: &[Expr], env: Env, heap: &mut Heap) -> Result<Expr, String> {
+    if list.len() < 3 {
+        return Err("ccall: expects at least 2 arguments (fn-ptr return-type ...)".into());
+    }
+    // Evaluate the function pointer.
+    let fn_ptr = eval(&list[1], env, heap)?;
+    // Return-type keyword (symbol), kept as-is.
+    let ret_type = list[2].clone();
+    // Remaining arguments: typed pairs or inferrable atoms.
+    let mut args = vec![fn_ptr, ret_type];
+    for item in &list[3..] {
+        match item {
+            Expr::List(pair) if pair.len() == 2 => {
+                // Typed arg: (:type expr) — evaluate only the value part.
+                let ty = pair[0].clone();
+                let val = eval(&pair[1], env, heap)?;
+                args.push(Expr::List(vec![ty, val]));
+            }
+            other => {
+                // Untyped arg: evaluate normally (type is inferred).
+                args.push(eval(other, env, heap)?);
+            }
+        }
+    }
+    ccall_impl(&args)
 }
 
 // ── function application ──────────────────────────────────────────────────────

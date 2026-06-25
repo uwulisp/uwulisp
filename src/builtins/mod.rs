@@ -1,7 +1,7 @@
 #[cfg(target_arch = "x86_64")]
 mod asm;
 mod base;
-mod cffi;
+pub(crate) mod cffi;
 mod network;
 mod utils;
 

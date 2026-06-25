@@ -125,10 +125,11 @@ fn expand_all(expr: &Expr, env: crate::expr::Env, heap: &mut Heap) -> Result<Exp
                     // sub-expressions (except quoted positions).
                     "quote" => return Ok(expr.clone()), // datum is opaque
                     "quasiquote" => return Ok(expr.clone()), // handled at compile time
-                    // defmacro is always handled by the tree-walker; never
-                    // reach here in normal flow (is_compilable blocks it), but
-                    // guard defensively so expand_all never mangles it.
-                    "defmacro" => return Ok(expr.clone()),
+                    // defmacro / defstruct are always handled by the tree-walker;
+                    // never reach here in normal flow (is_compilable blocks
+                    // them), but guard defensively so expand_all never mangles
+                    // them.
+                    "defmacro" | "defstruct" => return Ok(expr.clone()),
                     "if" | "begin" | "define" | "set!" | "let" | "let*" | "for" => {
                         // Expand sub-expressions, keeping the special-form head.
                         let mut expanded = vec![list[0].clone()];
@@ -1120,9 +1121,8 @@ fn is_compilable_rec(expr: &Expr, qq_depth: usize, heap: &Heap, env: GcHandle) -
                 if let Expr::Symbol(s) = &items[0] {
                     match s.as_str() {
                         "unquote" | "unquote-splicing" => return false,
-                        // defmacro produces Expr::Macro, which the VM cannot
-                        // construct — always fall back to the tree-walker.
-                        "defmacro" => return false,
+                        // defmacro / defstruct / ccall always fall back to the tree-walker.
+                        "defmacro" | "defstruct" | "ccall" => return false,
                         "lambda" => {
                             return items.iter().all(|e| is_compilable_rec(e, 0, heap, env));
                         }

@@ -165,6 +165,27 @@ Macros differ from lambdas in two ways: arguments are not pre-evaluated, and mac
 
 ---
 
+### `defstruct` — special form
+
+**Rule:** `(defstruct name field*)`
+
+Defines a structure type. Generates:
+- **Constructor** `(name val1 val2 …)` — returns a tagged list `(struct name val1 val2 …)`.
+- **Predicate** `(name? obj)` — returns `#t` if `obj` is a struct of this type.
+- **Accessor** `(name-field obj)` — returns the value of `field` for the given struct instance.
+
+`defstruct` always falls back to the tree-walker; it is not compiled to bytecode.
+
+```lisp
+(defstruct point x y)
+(define p (point 3 4))
+(point? p)      ; ⇒ #t
+(point-x p)     ; ⇒ 3
+(point-y p)     ; ⇒ 4
+```
+
+---
+
 ### `import` — special form
 
 **Rule:** `(import "path")`
@@ -276,6 +297,23 @@ Evaluates `f` and each `arg` left-to-right, then performs the call as a trampoli
 ```
 
 > **Builtin functions** are opaque Rust closures and are always called immediately — `tailcall` has no additional effect on them beyond normal argument evaluation.
+
+---
+
+### `ccall` — special form
+
+**Rule:** `(ccall fn-ptr ret-type (arg-type val) …)`
+
+Calls a C function pointer loaded via `lisp-dlsym`. The first argument is the function pointer (integer). The second is a return-type keyword (`:int`, `:float`, `:void`, or `:ptr`). Remaining arguments are typed argument pairs `(:type expr)` where `expr` is evaluated.
+
+`ccall` is a special form because its typed argument pairs must not be evaluated as function applications — `(:ptr p)` is metadata, not a call to `:ptr`. It always falls back to the tree-walker.
+
+```lisp
+(ccall sqrt :float 9.0)       ; ⇒ 3.0
+(ccall sum-point :int (:ptr p))
+```
+
+See [`docs/builtins/cffi.md`](builtins/cffi.md) for full details.
 
 ---
 
