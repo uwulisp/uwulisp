@@ -644,23 +644,26 @@ pub fn transport_term_fallback(p_: Term, x_: Term) -> Term {
                             ))),
                         )
                     } else {
-                        // Domain varies: old non-dependent-only check
-                        let b0_body = match &b0 {
-                            Term::TPi(_, _, b) => (**b).clone(),
-                            _ => b0.clone(),
-                        };
-                        let b_fam = Term::PLam(
-                            i_name.clone(),
-                            Box::new(match nbe_eval(&beta(&shift(1, 0, body), &Term::TVar(0))) {
-                                Term::TPi(_, _, b_i) => *b_i,
-                                _ => shift(1, 0, &b0_body),
-                            }),
-                        );
+                        // Domain varies
                         let b_non_dep = match &b0 {
                             Term::TPi(_, _, b0_body) => subst(0, &Term::TUniv(0), b0_body) == **b0_body,
                             _ => false,
                         };
                         if b_non_dep {
+                            // Non-dependent codomain: transport reduces to:
+                            //   λ a. transport (⟨i⟩ Bᵢ) (f a)
+                            // where B is the codomain type (does not reference a)
+                            let b0_body = match &b0 {
+                                Term::TPi(_, _, b) => (**b).clone(),
+                                _ => b0.clone(),
+                            };
+                            let b_fam = Term::PLam(
+                                i_name.clone(),
+                                Box::new(match nbe_eval(&beta(&shift(1, 0, body), &Term::TVar(0))) {
+                                    Term::TPi(_, _, b_i) => *b_i,
+                                    _ => shift(1, 0, &b0_body),
+                                }),
+                            );
                             let x_shifted = shift(1, 0, &x_);
                             Term::TAbs(
                                 arg_name,
@@ -670,7 +673,93 @@ pub fn transport_term_fallback(p_: Term, x_: Term) -> Term {
                                 ))),
                             )
                         } else {
-                            Term::TTransport(Box::new(Term::PLam(i_name.clone(), body.clone())), Box::new(x_))
+                            // codomain depends on x — full formula:
+                            // transp (⟨i⟩ Π (x : A i) → B i x) f
+                            //   = λ y . transp (⟨i⟩ B i (fill A y₀ i)) (f y₀)
+                            //   where y₀ = transp (⟨j⟩ A (~j)) y
+                            let arg_name = arg_name.clone();
+                            let i_name = i_name.clone();
+
+                            // Extract A_i (domain) and b_i (codomain body) at interval var
+                            let pi_at_var = nbe_eval(&beta(&shift(1, 0, body), &Term::TVar(0)));
+                            let a_i = match &pi_at_var {
+                                Term::TPi(_, a, _) => (**a).clone(),
+                                _ => shift(1, 0, &**a0),
+                            };
+                            let b0_body = match &b0 {
+                                Term::TPi(_, _, b) => (**b).clone(),
+                                _ => b0.clone(),
+                            };
+                            let b_i = match &pi_at_var {
+                                Term::TPi(_, _, b) => (**b).clone(),
+                                _ => shift(1, 0, &b0_body),
+                            };
+
+                            // A_fam = ⟨i_name⟩ A i
+                            let a_fam = Term::PLam(i_name.clone(), Box::new(a_i));
+
+                            // A_rev_fam = ⟨j⟩ A (~j)
+                            let a_rev_fam = Term::PLam(
+                                "j".to_string(),
+                                Box::new(Term::PApp(
+                                    Box::new(shift(1, 0, &a_fam)),
+                                    Box::new(Term::TInterval(I::Neg(Box::new(I::IVar(0))))),
+                                )),
+                            );
+
+                            // y₀ = transp A_rev y  (y = TVar(0) in TAbs context)
+                            let y0_term = Term::TTransport(
+                                Box::new(shift(1, 0, &a_rev_fam)),
+                                Box::new(Term::TVar(0)),
+                            );
+
+                            // b_fam = ⟨i⟩ B i (fill A y₀ i)
+                            let b_fam = Term::PLam(
+                                i_name.clone(),
+                                Box::new({
+                                    // b_i has TVar(0)=x, TVar(1)=interval
+                                    // Swap to TVar(0)=interval, TVar(1)=x
+                                    let max_idx = max_var(&b_i);
+                                    let temp = max_idx + 1;
+                                    let tmp_var = Term::TVar(temp);
+                                    let step1 = subst(0, &tmp_var, &b_i);
+                                    let step2 = subst(1, &Term::TVar(0), &step1);
+                                    let b_i_swapped = subst(temp, &Term::TVar(1), &step2);
+
+                                    // fill A y₀ i = transp (⟨j⟩ A (i ∧ j)) y₀
+                                    let y0_shifted = shift(1, 0, &y0_term);
+                                    let fill_at_i = nbe_eval(&Term::TTransport(
+                                        Box::new(Term::PLam(
+                                            "j".to_string(),
+                                            Box::new(nbe_eval(&Term::PApp(
+                                                Box::new(shift(2, 0, &a_fam)),
+                                                Box::new(Term::TInterval(I::Meet(
+                                                    Box::new(I::IVar(1)),
+                                                    Box::new(I::IVar(0)),
+                                                ))),
+                                            ))),
+                                        )),
+                                        Box::new(y0_shifted),
+                                    ));
+                                    // fill_at_i: TVar(0)=interval, TVar(1)=y
+
+                                    // B i (fill A y₀ i)
+                                    nbe_eval(&subst(1, &fill_at_i, &b_i_swapped))
+                                }),
+                            );
+
+                            // λ y. transp (⟨i⟩ B i (fill_i)) (f y₀)
+                            let x_shifted = shift(1, 0, &x_);
+                            Term::TAbs(
+                                arg_name,
+                                Box::new(nbe_eval(&Term::TTransport(
+                                    Box::new(b_fam),
+                                    Box::new(nbe_eval(&Term::TApp(
+                                        Box::new(x_shifted),
+                                        Box::new(y0_term),
+                                    ))),
+                                ))),
+                            )
                         }
                     }
                 }
