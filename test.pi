@@ -1,0 +1,14 @@
+;; Evaluate an inline cubical program
+(define result (eval-pic "
+  data Bool =
+    | true : Bool
+    | false : Bool
+
+  def not : Bool -> Bool =
+    \\b. match b return Bool with
+      | true => false
+      | false => true
+"))
+(define name   (car result))          ;; "not"
+(define type   (car (cdr result)))    ;; CubicalTerm (type)
+(define value  (car (cdr (cdr result)))) ;; CubicalTerm (value)
