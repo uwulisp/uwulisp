@@ -249,11 +249,10 @@ pub fn do_apply(f: Value, a: Value) -> Value {
 }
 
 pub fn do_papp(p: Value, r: Value) -> Value {
-    if let Some(i) = value_to_endpoint(&r) {
-        if let Value::VPLam(_, clos) = p {
+    if let Some(i) = value_to_endpoint(&r)
+        && let Value::VPLam(_, clos) = p {
             return clos.apply_i(i);
         }
-    }
 
     match p {
         Value::VPLam(_, clos) => match r {
@@ -327,7 +326,9 @@ pub fn do_transport(env: &[Value], p: Value, x: Value) -> Value {
                 return x;
             }
 
-            let result = match (&b0, &b1) {
+            
+
+            match (&b0, &b1) {
                 (Value::VUniv(_), Value::VUniv(_)) => x,
 
                 // ----------------------------------------------------------
@@ -367,9 +368,7 @@ pub fn do_transport(env: &[Value], p: Value, x: Value) -> Value {
                 }
 
                 _ => Value::VTransport(Box::new(Value::VPLam("_".to_string(), clos.clone())), Box::new(x)),
-            };
-
-            result
+            }
         }
         other => Value::VNeutral(Neutral::NTransport(Box::new(other), Box::new(x))),
     }

@@ -36,12 +36,11 @@ impl JitCache {
         }
 
         entry.exec_count += 1;
-        if entry.exec_count >= Self::HOT_THRESHOLD {
-            if let Ok((mem, fp)) = crate::vm::jit_compiler::JitCompiler::compile_chunk(chunk) {
+        if entry.exec_count >= Self::HOT_THRESHOLD
+            && let Ok((mem, fp)) = crate::vm::jit_compiler::JitCompiler::compile_chunk(chunk) {
                 entry.compiled = Some((mem, fp));
                 return Some(fp);
             }
-        }
 
         None
     }

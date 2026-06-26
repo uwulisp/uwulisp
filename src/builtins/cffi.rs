@@ -210,7 +210,7 @@ fn mem_ref_impl(args: &[Expr]) -> Result<Expr, String> {
             Ok(Expr::Int(val as i64))
         }
         ":uint8" | ":u8" => {
-            let val = unsafe { std::ptr::read_unaligned(addr as *const u8) };
+            let val = unsafe { std::ptr::read_unaligned(addr) };
             Ok(Expr::Int(val as i64))
         }
         ":int16" | ":i16" => {
@@ -283,7 +283,7 @@ fn mem_set_impl(args: &[Expr]) -> Result<Expr, String> {
         }
         ":uint8" | ":u8" => {
             let val = as_i64(&args[3])? as u8;
-            unsafe { std::ptr::write_unaligned(addr as *mut u8, val) };
+            unsafe { std::ptr::write_unaligned(addr, val) };
             Ok(Expr::List(vec![]))
         }
         ":int16" | ":i16" => {
@@ -401,7 +401,7 @@ pub(crate) fn ccall_impl(args: &[Expr]) -> Result<Expr, String> {
     };
 
     let (ret_type, arg_offset, ret_explicit) = parse_ret_type(args)?;
-    let ncall_args = args.len().checked_sub(arg_offset).unwrap_or(0);
+    let ncall_args = args.len().saturating_sub(arg_offset);
     if ncall_args > 6 {
         return Err("ccall: supports at most 6 arguments".into());
     }

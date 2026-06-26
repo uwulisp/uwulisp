@@ -1287,8 +1287,8 @@ fn reduce_pcon_endpoints_dt(dts: &[Datatype], t: &Term) -> Term {
             };
             if is_i0 || is_i1 {
                 // Look up the face value from the PConSig.
-                if let Some(dt) = dts.iter().find(|dt| &dt.name == d) {
-                    if let Some(sig) = dt.find_pcon(pc) {
+                if let Some(dt) = dts.iter().find(|dt| &dt.name == d)
+                    && let Some(sig) = dt.find_pcon(pc) {
                         // face0/face1 are in a scope of sig.arity() ordinary args.
                         // Substitute the checked args into the face term.
                         let reduced_args: Vec<Term> =
@@ -1300,7 +1300,6 @@ fn reduce_pcon_endpoints_dt(dts: &[Datatype], t: &Term) -> Term {
                             .fold(face.clone(), |acc, a| beta(&acc, a));
                         return reduce_pcon_endpoints_dt(dts, &nbe_eval(&face_inst));
                     }
-                }
             }
             // Not at an endpoint (or datatype not found): reduce sub-terms.
             let reduced_args: Vec<Term> =
@@ -1398,8 +1397,8 @@ pub fn check_dt(dts: &[Datatype], ctx: &Ctx, t: &Term, ty: &Term) -> Result<(), 
             match glue {
             Term::TGlue(a_ty, phi_, te) => {
                 check_interval(ctx, phi)?;
-                require_equal(ctx, &nbe_eval(&phi_), &nbe_eval(phi))?;
-                let t_ty = match nbe_eval(&te) {
+                require_equal(ctx, &nbe_eval(phi_), &nbe_eval(phi))?;
+                let t_ty = match nbe_eval(te) {
                     Term::TMkEquiv(dom_a, _, _, _, _, _) => nbe_eval(&dom_a),
                     Term::TEquiv(dom_a, _) => nbe_eval(&dom_a),
                     Term::TPair(te_a, _) => nbe_eval(&te_a),
@@ -1425,7 +1424,7 @@ pub fn check_dt(dts: &[Datatype], ctx: &Ctx, t: &Term, ty: &Term) -> Result<(), 
                     _ => t_ty.clone(),
                 };
                 check_dt(dts, ctx, t_inner, &cap_ty)?;
-                check_dt(dts, ctx, a, &nbe_eval(&a_ty))
+                check_dt(dts, ctx, a, &nbe_eval(a_ty))
             }
             other => Err(TypeError::Other(format!(
                 "glue: expected Glue type, got: {}",
@@ -1443,7 +1442,7 @@ pub fn check_dt(dts: &[Datatype], ctx: &Ctx, t: &Term, ty: &Term) -> Result<(), 
                     other => return Err(TypeError::ExpectedSigma(other)),
                 },
             };
-            check_dt(dts, ctx, a, &nbe_eval(&a_ty))?;
+                            check_dt(dts, ctx, a, &nbe_eval(&a_ty))?;
             check_dt(dts, ctx, b, &nbe_eval(&beta(&b_ty, a)))
         }
 

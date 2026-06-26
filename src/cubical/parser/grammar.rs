@@ -737,20 +737,16 @@ impl Parser {
         if self.is_decl_start() {
             return false;
         }
-        if self.stop_at_with {
-            if let TokenKind::Ident(name) = &self.peek().kind {
-                if name == "with" {
+        if self.stop_at_with
+            && let TokenKind::Ident(name) = &self.peek().kind
+                && name == "with" {
                     return false;
                 }
-            }
-        }
-        if self.stop_at_in {
-            if let TokenKind::Ident(name) = &self.peek().kind {
-                if name == "in" {
+        if self.stop_at_in
+            && let TokenKind::Ident(name) = &self.peek().kind
+                && name == "in" {
                     return false;
                 }
-            }
-        }
         matches!(
             &self.peek().kind,
             TokenKind::Ident(_) | TokenKind::Int(_) | TokenKind::LParen

@@ -289,8 +289,8 @@ fn emit_elim(cases: &[ElimCase], scrut: &Term, env: &[Name], ctx: &mut PythonMod
 }
 
 fn try_emit_let(term: &Term, env: &[Name], ctx: &mut PythonModuleCtx) -> Option<String> {
-    if let Term::TApp(f, value) = term {
-        if let Term::TAbs(binder, body) = f.as_ref() {
+    if let Term::TApp(f, value) = term
+        && let Term::TAbs(binder, body) = f.as_ref() {
             let sanitized = lowercase_first(binder);
             let mut env2 = vec![sanitized.clone()];
             env2.extend_from_slice(env);
@@ -301,7 +301,6 @@ fn try_emit_let(term: &Term, env: &[Name], ctx: &mut PythonModuleCtx) -> Option<
                 emit_term(value, env, ctx)
             ));
         }
-    }
     None
 }
 
@@ -485,12 +484,11 @@ fn demo_value(ty: &Term, datatype_info: &HashMap<Name, DatatypeInfo>) -> (String
                 vec![mod_name],
             );
         }
-        if let Some(info) = datatype_info.get(name) {
-            if let Some(con) = info.nullary_constructors.first() {
+        if let Some(info) = datatype_info.get(name)
+            && let Some(con) = info.nullary_constructors.first() {
                 let mod_name = info.module_name.to_lowercase();
                 return (format!("{}.{}", mod_name, con), vec![mod_name]);
             }
-        }
     }
     ("None".to_string(), Vec::new())
 }

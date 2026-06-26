@@ -37,11 +37,10 @@ fn substitute(expr: &Expr, subst: &HashMap<String, Expr>) -> Expr {
 /// Returns `Some(op_name)` when `expr` is a list whose first element is a
 /// symbol — e.g. `(unquote foo)` → `Some("unquote")`.
 fn qq_op(expr: &Expr) -> Option<&str> {
-    if let Expr::List(l) = expr {
-        if let Some(Expr::Symbol(s)) = l.first() {
+    if let Expr::List(l) = expr
+        && let Some(Expr::Symbol(s)) = l.first() {
             return Some(s.as_str());
         }
-    }
     None
 }
 

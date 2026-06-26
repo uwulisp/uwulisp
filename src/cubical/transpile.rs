@@ -100,8 +100,7 @@ pub fn transpile_source(root_path: &Path, source: &str) -> Result<TranspileOutpu
         .files
         .iter()
         .find(|f| canonical_import_path(&f.uwuc_path) == root_canonical)
-    {
-        if let Some((entry_name, entry_ty)) =
+        && let Some((entry_name, entry_ty)) =
             root_file.decls.iter().find_map(|decl| match decl {
                 Decl::Def { name, ty, .. } if name == "main" => Some((name.as_str(), ty)),
                 _ => None,
@@ -124,7 +123,6 @@ pub fn transpile_source(root_path: &Path, source: &str) -> Result<TranspileOutpu
                 source: driver,
             });
         }
-    }
 
     Ok(TranspileOutput {
         modules,

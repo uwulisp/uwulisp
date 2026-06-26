@@ -265,16 +265,14 @@ fn eta_eq_uncached(fuel: usize, ctx: &Ctx, t1: &Term, t2: &Term, memo: &mut EtaM
     // ------------------------------------------------------------------
     // Path boundary reduction (consumes fuel)
     // ------------------------------------------------------------------
-    if let Term::PApp(p, r) = t1 {
-        if let Some(u) = reduce_papp_by_type(ctx, p, r) {
+    if let Term::PApp(p, r) = t1
+        && let Some(u) = reduce_papp_by_type(ctx, p, r) {
             return eta_eq_memo(fuel - 1, ctx, &u, t2, memo);
         }
-    }
-    if let Term::PApp(p, r) = t2 {
-        if let Some(u) = reduce_papp_by_type(ctx, p, r) {
+    if let Term::PApp(p, r) = t2
+        && let Some(u) = reduce_papp_by_type(ctx, p, r) {
             return eta_eq_memo(fuel - 1, ctx, t1, &u, memo);
         }
-    }
 
     // ------------------------------------------------------------------
     // Lambda eta (consumes fuel)
