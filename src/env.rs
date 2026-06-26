@@ -6,4 +6,5 @@
 // re-exported here through `expr.rs` so that existing import paths like
 // `use crate::env::EnvData` continue to work unchanged.
 pub use crate::expr::{Env, env_get, env_set, new_env};
-pub use crate::gc::{EnvData, GcHandle, Heap};
+// EnvData, GcHandle, and Heap are not re-exported here — nothing in the
+// crate imported them via this path.  Import directly from crate::gc.

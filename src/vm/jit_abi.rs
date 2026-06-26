@@ -49,7 +49,7 @@ impl JitFrame {
 
         let env = vm.frames.last().map(|f| f.env).expect("JIT needs an env");
 
-        let mut frame = JitFrame {
+        let frame = JitFrame {
             stack_ptr: stack_vals.as_mut_ptr(),
             tag_ptr: stack_tags.as_mut_ptr(),
             val_ptr: val_refs.as_mut_ptr(),

@@ -494,4 +494,49 @@ mod tests {
         })
         .unwrap_or(());
     }
+
+    #[test]
+    fn test_division_preserves_int_when_exact() {
+        let mut heap = Heap::new();
+        let env = builtins::global_env(&mut heap);
+
+        let res = eval_str("(/ 4 2)", &mut heap, env).unwrap();
+        assert!(matches!(res, Expr::Int(n) if n == 2));
+    }
+
+    #[test]
+    fn test_division_returns_float_when_inexact() {
+        let mut heap = Heap::new();
+        let env = builtins::global_env(&mut heap);
+
+        let res = eval_str("(/ 5 2)", &mut heap, env).unwrap();
+        assert!(matches!(res, Expr::Float(n) if (n - 2.5).abs() < 1e-10));
+    }
+
+    #[test]
+    fn test_division_returns_float_when_float_arg() {
+        let mut heap = Heap::new();
+        let env = builtins::global_env(&mut heap);
+
+        let res = eval_str("(/ 4 2.0)", &mut heap, env).unwrap();
+        assert!(matches!(res, Expr::Float(n) if (n - 2.0).abs() < 1e-10));
+    }
+
+    #[test]
+    fn test_modulo_accepts_float() {
+        let mut heap = Heap::new();
+        let env = builtins::global_env(&mut heap);
+
+        let res = eval_str("(% 5.0 2.0)", &mut heap, env).unwrap();
+        assert!(matches!(res, Expr::Int(n) if n == 1));
+    }
+
+    #[test]
+    fn test_negation_overflow_returns_error() {
+        let mut heap = Heap::new();
+        let env = builtins::global_env(&mut heap);
+
+        let res = eval_str("(- -9223372036854775808)", &mut heap, env);
+        assert!(res.is_err());
+    }
 }

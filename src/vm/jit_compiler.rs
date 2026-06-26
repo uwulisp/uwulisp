@@ -30,7 +30,7 @@ impl JitCompiler {
         let frame_offset_stack_len = 8;
         let frame_offset_result_tag = 24;
         let frame_offset_result_val = 32;
-        let frame_offset_error = 40;
+        let _frame_offset_error = 40;
         let frame_offset_tag_ptr = 48;
 
         // Prologue — save callee-saved GPRs
