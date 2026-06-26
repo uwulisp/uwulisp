@@ -369,7 +369,7 @@ pub fn do_transport(env: &[Value], p: Value, x: Value) -> Value {
                 _ => Value::VTransport(Box::new(Value::VPLam("_".to_string(), clos.clone())), Box::new(x)),
             };
 
-            return result;
+            result
         }
         other => Value::VNeutral(Neutral::NTransport(Box::new(other), Box::new(x))),
     }
@@ -421,8 +421,8 @@ fn uses_tvar_0(t: &Term) -> bool {
         Term::TFst(p) => uses_tvar_0(p),
         Term::TSnd(p) => uses_tvar_0(p),
         Term::TUniv(_) | Term::TIntervalTy | Term::TInterval(_) | Term::TCube(_) | Term::TData(_) => false,
-        Term::TCon(_, _, args) => args.iter().any(|a| uses_tvar_0(a)),
-        Term::TPCon(_, _, args, r) => args.iter().any(|a| uses_tvar_0(a)) || uses_tvar_0(r),
+        Term::TCon(_, _, args) => args.iter().any(uses_tvar_0),
+        Term::TPCon(_, _, args, r) => args.iter().any(uses_tvar_0) || uses_tvar_0(r),
         Term::TElim(motive, cases, scrut) => {
             uses_tvar_0(motive) || uses_tvar_0(scrut) || cases.iter().any(|c| uses_tvar_0(&c.body))
         }
@@ -684,7 +684,7 @@ pub fn transport_term_fallback(p_: Term, x_: Term) -> Term {
                             let pi_at_var = nbe_eval(&beta(&shift(1, 0, body), &Term::TVar(0)));
                             let a_i = match &pi_at_var {
                                 Term::TPi(_, a, _) => (**a).clone(),
-                                _ => shift(1, 0, &**a0),
+                                _ => shift(1, 0, a0),
                             };
                             let b0_body = match &b0 {
                                 Term::TPi(_, _, b) => (**b).clone(),

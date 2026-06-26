@@ -626,7 +626,7 @@ impl<'h> VM<'h> {
                 let call_env = new_env(self.heap, Some(closure_env));
 
                 // Bind parameters.
-                for (name, val) in params.iter().zip(args.into_iter()) {
+                for (name, val) in params.iter().zip(args) {
                     let expr = self.vm_value_to_expr_inner(val)?;
                     env_set(self.heap, call_env, name.clone(), expr);
                 }

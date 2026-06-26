@@ -39,13 +39,10 @@ impl JitFrame {
         // We set up a separate parallel array for JIT execution.
         // For phase 1 we just allocate a fresh stack of size 1024.
         let capacity = 1024;
-        let mut stack_vals = Vec::with_capacity(capacity);
-        stack_vals.resize(capacity, 0u64);
+        let mut stack_vals = vec![0u64; capacity];
         let actual_capacity = stack_vals.capacity();
-        let mut stack_tags = Vec::with_capacity(actual_capacity);
-        stack_tags.resize(actual_capacity, 0u64);
-        let mut val_refs = Vec::with_capacity(actual_capacity);
-        val_refs.resize(actual_capacity, VmValue::Nil);
+        let mut stack_tags = vec![0u64; actual_capacity];
+        let mut val_refs = vec![VmValue::Nil; actual_capacity];
 
         let env = vm.frames.last().map(|f| f.env).expect("JIT needs an env");
 
