@@ -31,13 +31,5 @@ cargo run --release test.pic
 cargo run --release examples.pic
 ```
 
-## Code Quality
-
-The project maintains zero Clippy warnings. Run the linter with:
-
-```bash
-cargo clippy
-```
-
 ## document
 [document](https://pi-lisp.github.io)
