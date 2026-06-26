@@ -5,7 +5,7 @@
 
 use std::fs;
 use std::rc::Rc;
-use std::sync::Arc;
+
 use std::thread;
 
 use crate::{
@@ -105,9 +105,9 @@ fn parse_operand(expr: &Expr) -> Result<Operand, String> {
             Ok(Operand::Imm32(n as i32))
         }
         // (mem <base-register> <displacement>)
-        Expr::List(parts) if parts.len() >= 1 => {
-            if let Expr::Symbol(head) = &parts[0] {
-                if head.as_str() == "mem" {
+        Expr::List(parts) if !parts.is_empty() => {
+            if let Expr::Symbol(head) = &parts[0]
+                && head.as_str() == "mem" {
                     let base = match parts.get(1) {
                         Some(Expr::Symbol(s)) => Some(parse_register(s)?),
                         Some(_) => return Err("mem: base must be a register symbol".into()),
@@ -129,7 +129,6 @@ fn parse_operand(expr: &Expr) -> Result<Operand, String> {
                     };
                     return Ok(Operand::Mem(mem));
                 }
-            }
             Err(format!("invalid operand: {:?}", expr))
         }
         _ => Err(format!("invalid operand type: {:?}", expr)),

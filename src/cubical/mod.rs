@@ -8,7 +8,7 @@ pub mod transpile;
 pub mod typechecker;
 
 pub use transpile::{
-    EmittedModule, TranspileError, TranspileOutput, transpile, transpile_source, write_output,
+    transpile, write_output,
 };
 
 use std::collections::HashSet;
@@ -45,7 +45,7 @@ impl fmt::Display for RunOutput {
 pub enum RunError {
     Io(std::io::Error),
     Parse(ParseError),
-    Type(TypeError),
+    Type(Box<TypeError>),
     Import(String),
     NoEntryPoint,
 }
@@ -78,7 +78,7 @@ impl From<ParseError> for RunError {
 
 impl From<TypeError> for RunError {
     fn from(err: TypeError) -> Self {
-        RunError::Type(err)
+        RunError::Type(Box::new(err))
     }
 }
 
@@ -205,7 +205,7 @@ fn process_data(dt: &crate::cubical::syntax::Datatype, env: &mut Env) -> Result<
     env.declare_datatype(dt.clone());
     for con in &dt.cons {
         for arg_ty in &con.arg_tys {
-            check_closed_dt(&env.datatypes, arg_ty, &Term::TUniv(0)).map_err(RunError::Type)?;
+            check_closed_dt(&env.datatypes, arg_ty, &Term::TUniv(0)).map_err(|e| RunError::Type(Box::new(e)))?;
         }
     }
     Ok(())

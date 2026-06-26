@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+#![allow(clippy::enum_variant_names)]
 
 use crate::cubical::interval::{DNF, I, dnf_bot, dnf_top, eval_interval};
 use crate::cubical::syntax::{ElimCase, Level, Name, Term, beta, equiv_dom, is_bot_dnf, is_top_dnf, max_var, shift, subst};
@@ -249,11 +250,10 @@ pub fn do_apply(f: Value, a: Value) -> Value {
 }
 
 pub fn do_papp(p: Value, r: Value) -> Value {
-    if let Some(i) = value_to_endpoint(&r) {
-        if let Value::VPLam(_, clos) = p {
+    if let Some(i) = value_to_endpoint(&r)
+        && let Value::VPLam(_, clos) = p {
             return clos.apply_i(i);
         }
-    }
 
     match p {
         Value::VPLam(_, clos) => match r {
@@ -327,7 +327,9 @@ pub fn do_transport(env: &[Value], p: Value, x: Value) -> Value {
                 return x;
             }
 
-            let result = match (&b0, &b1) {
+            
+
+            match (&b0, &b1) {
                 (Value::VUniv(_), Value::VUniv(_)) => x,
 
                 // ----------------------------------------------------------
@@ -367,9 +369,7 @@ pub fn do_transport(env: &[Value], p: Value, x: Value) -> Value {
                 }
 
                 _ => Value::VTransport(Box::new(Value::VPLam("_".to_string(), clos.clone())), Box::new(x)),
-            };
-
-            return result;
+            }
         }
         other => Value::VNeutral(Neutral::NTransport(Box::new(other), Box::new(x))),
     }
@@ -421,8 +421,8 @@ fn uses_tvar_0(t: &Term) -> bool {
         Term::TFst(p) => uses_tvar_0(p),
         Term::TSnd(p) => uses_tvar_0(p),
         Term::TUniv(_) | Term::TIntervalTy | Term::TInterval(_) | Term::TCube(_) | Term::TData(_) => false,
-        Term::TCon(_, _, args) => args.iter().any(|a| uses_tvar_0(a)),
-        Term::TPCon(_, _, args, r) => args.iter().any(|a| uses_tvar_0(a)) || uses_tvar_0(r),
+        Term::TCon(_, _, args) => args.iter().any(uses_tvar_0),
+        Term::TPCon(_, _, args, r) => args.iter().any(uses_tvar_0) || uses_tvar_0(r),
         Term::TElim(motive, cases, scrut) => {
             uses_tvar_0(motive) || uses_tvar_0(scrut) || cases.iter().any(|c| uses_tvar_0(&c.body))
         }
@@ -684,7 +684,7 @@ pub fn transport_term_fallback(p_: Term, x_: Term) -> Term {
                             let pi_at_var = nbe_eval(&beta(&shift(1, 0, body), &Term::TVar(0)));
                             let a_i = match &pi_at_var {
                                 Term::TPi(_, a, _) => (**a).clone(),
-                                _ => shift(1, 0, &**a0),
+                                _ => shift(1, 0, a0),
                             };
                             let b0_body = match &b0 {
                                 Term::TPi(_, _, b) => (**b).clone(),
@@ -703,7 +703,7 @@ pub fn transport_term_fallback(p_: Term, x_: Term) -> Term {
                                 "j".to_string(),
                                 Box::new(Term::PApp(
                                     Box::new(shift(1, 0, &a_fam)),
-                                    Box::new(Term::TInterval(I::Neg(Box::new(I::IVar(0))))),
+                                    Box::new(Term::TInterval(I::Neg(Box::new(I::Var(0))))),
                                 )),
                             );
 
@@ -734,8 +734,8 @@ pub fn transport_term_fallback(p_: Term, x_: Term) -> Term {
                                             Box::new(nbe_eval(&Term::PApp(
                                                 Box::new(shift(2, 0, &a_fam)),
                                                 Box::new(Term::TInterval(I::Meet(
-                                                    Box::new(I::IVar(1)),
-                                                    Box::new(I::IVar(0)),
+                                                    Box::new(I::Var(1)),
+                                                    Box::new(I::Var(0)),
                                                 ))),
                                             ))),
                                         )),
@@ -835,8 +835,8 @@ pub fn transport_term_fallback(p_: Term, x_: Term) -> Term {
                                                 Box::new(nbe_eval(&Term::PApp(
                                                     Box::new(shift(2, 0, &a_fam)),
                                                     Box::new(Term::TInterval(I::Meet(
-                                                        Box::new(I::IVar(1)),
-                                                        Box::new(I::IVar(0)),
+                                                        Box::new(I::Var(1)),
+                                                        Box::new(I::Var(0)),
                                                     ))),
                                                 ))),
                                             )),
@@ -1108,7 +1108,7 @@ fn value_to_dnf(v: Value) -> DNF {
     match v {
         Value::VCube(d) => d,
         Value::VInterval(i) => eval_interval(&i),
-        Value::VIntervalVar(level) => eval_interval(&I::IVar(level as i32)),
+        Value::VIntervalVar(level) => eval_interval(&I::Var(level as i32)),
         other => match quote(0, other) {
             Term::TCube(d) => d,
             Term::TInterval(i) => eval_interval(&i),

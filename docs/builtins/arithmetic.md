@@ -23,7 +23,7 @@ Subtracts numbers. With a single argument, negates it.
 (- n1 n2 ...)   →  Number   ; subtraction
 ```
 
-Requires at least one argument.
+Requires at least one argument. Negation of `i64::MIN` (`-9223372036854775808`) raises an overflow error.
 
 ---
 

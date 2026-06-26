@@ -39,17 +39,14 @@ impl JitFrame {
         // We set up a separate parallel array for JIT execution.
         // For phase 1 we just allocate a fresh stack of size 1024.
         let capacity = 1024;
-        let mut stack_vals = Vec::with_capacity(capacity);
-        stack_vals.resize(capacity, 0u64);
+        let mut stack_vals = vec![0u64; capacity];
         let actual_capacity = stack_vals.capacity();
-        let mut stack_tags = Vec::with_capacity(actual_capacity);
-        stack_tags.resize(actual_capacity, 0u64);
-        let mut val_refs = Vec::with_capacity(actual_capacity);
-        val_refs.resize(actual_capacity, VmValue::Nil);
+        let mut stack_tags = vec![0u64; actual_capacity];
+        let mut val_refs = vec![VmValue::Nil; actual_capacity];
 
         let env = vm.frames.last().map(|f| f.env).expect("JIT needs an env");
 
-        let mut frame = JitFrame {
+        let frame = JitFrame {
             stack_ptr: stack_vals.as_mut_ptr(),
             tag_ptr: stack_tags.as_mut_ptr(),
             val_ptr: val_refs.as_mut_ptr(),
@@ -98,7 +95,7 @@ impl JitFrame {
 
     pub fn push_val(&mut self, val: VmValue) {
         if self.stack_len >= self.capacity {
-            self.error = "JIT Stack overflow\0".as_ptr();
+            self.error = c"JIT Stack overflow".as_ptr() as *const u8;
             return;
         }
         let idx = self.stack_len;
@@ -132,7 +129,7 @@ impl JitFrame {
 
     pub fn pop_val(&mut self) -> Result<VmValue, ()> {
         if self.stack_len == 0 {
-            self.error = "JIT Stack underflow\0".as_ptr();
+            self.error = c"JIT Stack underflow".as_ptr() as *const u8;
             return Err(());
         }
         self.stack_len -= 1;
@@ -168,12 +165,12 @@ pub unsafe extern "C" fn jit_helper_load_var(
         Ok(expr) => match crate::vm::machine::expr_to_vm_value(&expr, vm.heap_mut()) {
             Ok(val) => frame.push_val(val),
             Err(_) => {
-                frame.error = "JIT LoadVar expr error\0".as_ptr();
+                frame.error = c"JIT LoadVar expr error".as_ptr() as *const u8;
                 frame.push_val(crate::vm::machine::VmValue::Nil);
             }
         },
         Err(_) => {
-            frame.error = "JIT LoadVar undefined variable\0".as_ptr();
+            frame.error = c"JIT LoadVar undefined variable".as_ptr() as *const u8;
             frame.push_val(crate::vm::machine::VmValue::Nil);
         },
     }
@@ -194,7 +191,7 @@ pub unsafe extern "C" fn jit_helper_store_var(
         if let Ok(expr) = crate::vm::machine::vm_value_to_expr(val, vm.heap_mut()) {
             vm.heap_mut().env_set(frame.env, name.to_string(), expr);
         } else {
-            frame.error = "JIT StoreVar vm_value_to_expr failed\0".as_ptr();
+            frame.error = c"JIT StoreVar vm_value_to_expr failed".as_ptr() as *const u8;
         }
     }
 }
@@ -206,13 +203,13 @@ pub unsafe extern "C" fn jit_helper_call(frame_ptr: *mut JitFrame, _n_args: usiz
     // In a full implementation, we'd sync the JIT stack to the VM stack, call do_call,
     // and run the new frame in the interpreter or JIT.
     // For now, this is a placeholder stub.
-    frame.error = "JIT Call not fully implemented\0".as_ptr();
+    frame.error = c"JIT Call not fully implemented".as_ptr() as *const u8;
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jit_helper_make_func(frame_ptr: *mut JitFrame, _code_offset: usize) {
     let frame = unsafe { &mut *frame_ptr };
-    frame.error = "JIT MakeFunc not fully implemented\0".as_ptr();
+    frame.error = c"JIT MakeFunc not fully implemented".as_ptr() as *const u8;
 }
 
 #[unsafe(no_mangle)]
@@ -221,7 +218,7 @@ pub unsafe extern "C" fn jit_helper_tree_eval(
     _expr_ptr: *const crate::expr::Expr,
 ) {
     let frame = unsafe { &mut *frame_ptr };
-    frame.error = "JIT TreeEval not fully implemented\0".as_ptr();
+    frame.error = c"JIT TreeEval not fully implemented".as_ptr() as *const u8;
 }
 
 #[unsafe(no_mangle)]
@@ -239,7 +236,7 @@ pub unsafe extern "C" fn jit_helper_pop_env(frame_ptr: *mut JitFrame) {
     if let Some(parent) = vm.heap_mut().parent_of(frame.env) {
         frame.env = parent;
     } else {
-        frame.error = "JIT PopEnv: no parent environment\0".as_ptr();
+        frame.error = c"JIT PopEnv: no parent environment".as_ptr() as *const u8;
     }
 }
 
@@ -250,5 +247,5 @@ pub unsafe extern "C" fn jit_helper_store_self(
     _name_len: usize,
 ) {
     let frame = unsafe { &mut *frame_ptr };
-    frame.error = "JIT StoreSelf not fully implemented\0".as_ptr();
+    frame.error = c"JIT StoreSelf not fully implemented".as_ptr() as *const u8;
 }

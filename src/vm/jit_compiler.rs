@@ -30,7 +30,7 @@ impl JitCompiler {
         let frame_offset_stack_len = 8;
         let frame_offset_result_tag = 24;
         let frame_offset_result_val = 32;
-        let frame_offset_error = 40;
+        let _frame_offset_error = 40;
         let frame_offset_tag_ptr = 48;
 
         // Prologue — save callee-saved GPRs
@@ -308,7 +308,7 @@ impl JitCompiler {
                 Op::LoadVar(name) => {
                     Self::emit_helper_call(
                         &mut asm,
-                        crate::vm::jit_abi::jit_helper_load_var as usize,
+                        crate::vm::jit_abi::jit_helper_load_var as *const () as usize,
                         Some(name.as_ptr() as u64),
                         Some(name.len() as u64),
                     );
@@ -316,7 +316,7 @@ impl JitCompiler {
                 Op::StoreVar(name) => {
                     Self::emit_helper_call(
                         &mut asm,
-                        crate::vm::jit_abi::jit_helper_store_var as usize,
+                        crate::vm::jit_abi::jit_helper_store_var as *const () as usize,
                         Some(name.as_ptr() as u64),
                         Some(name.len() as u64),
                     );
@@ -324,7 +324,7 @@ impl JitCompiler {
                 Op::Call(n_args) => {
                     Self::emit_helper_call(
                         &mut asm,
-                        crate::vm::jit_abi::jit_helper_call as usize,
+                        crate::vm::jit_abi::jit_helper_call as *const () as usize,
                         Some(*n_args as u64),
                         None,
                     );
@@ -332,7 +332,7 @@ impl JitCompiler {
                 Op::MakeFunc { code_offset, .. } => {
                     Self::emit_helper_call(
                         &mut asm,
-                        crate::vm::jit_abi::jit_helper_make_func as usize,
+                        crate::vm::jit_abi::jit_helper_make_func as *const () as usize,
                         Some(*code_offset as u64),
                         None,
                     );
@@ -342,7 +342,7 @@ impl JitCompiler {
                     // For now, this just calls the helper with arg 0.
                     Self::emit_helper_call(
                         &mut asm,
-                        crate::vm::jit_abi::jit_helper_tree_eval as usize,
+                        crate::vm::jit_abi::jit_helper_tree_eval as *const () as usize,
                         Some(0),
                         None,
                     );
@@ -350,7 +350,7 @@ impl JitCompiler {
                 Op::PushEnv => {
                     Self::emit_helper_call(
                         &mut asm,
-                        crate::vm::jit_abi::jit_helper_push_env as usize,
+                        crate::vm::jit_abi::jit_helper_push_env as *const () as usize,
                         None,
                         None,
                     );
@@ -358,7 +358,7 @@ impl JitCompiler {
                 Op::PopEnv => {
                     Self::emit_helper_call(
                         &mut asm,
-                        crate::vm::jit_abi::jit_helper_pop_env as usize,
+                        crate::vm::jit_abi::jit_helper_pop_env as *const () as usize,
                         None,
                         None,
                     );
@@ -366,7 +366,7 @@ impl JitCompiler {
                 Op::StoreSelf(_) => {
                     Self::emit_helper_call(
                         &mut asm,
-                        crate::vm::jit_abi::jit_helper_store_self as usize,
+                        crate::vm::jit_abi::jit_helper_store_self as *const () as usize,
                         Some(0),
                         Some(0),
                     );
@@ -375,7 +375,7 @@ impl JitCompiler {
                     // Fallback to error for unimplemented ops
                     Self::emit_helper_call(
                         &mut asm,
-                        crate::vm::jit_abi::jit_helper_tree_eval as usize,
+                        crate::vm::jit_abi::jit_helper_tree_eval as *const () as usize,
                         Some(0),
                         None,
                     );

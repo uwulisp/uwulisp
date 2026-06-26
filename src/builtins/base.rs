@@ -34,7 +34,12 @@ pub fn register_arithmetic(env: Env, heap: &mut Heap) {
             if args.len() == 1 {
                 let n = num(&args[0])?;
                 let any_float = matches!(args[0], Expr::Float(_));
-                return if any_float { Ok(Expr::Float(-n)) } else { Ok(Expr::Int(-(n as i64))) };
+                return if any_float {
+                    Ok(Expr::Float(-n))
+                } else {
+                    let n = n as i64;
+                    n.checked_neg().map(Expr::Int).ok_or_else(|| "-: integer overflow".into())
+                };
             }
             let mut it = args.iter();
             let first = it.next().unwrap();
@@ -73,15 +78,22 @@ pub fn register_arithmetic(env: Env, heap: &mut Heap) {
                 return Err("/: need at least 1 argument".into());
             }
             let mut it = args.iter();
-            let mut acc = num(it.next().unwrap())?;
+            let first = it.next().unwrap();
+            let mut any_float = matches!(first, Expr::Float(_));
+            let mut acc = num(first)?;
             for a in it {
+                any_float = any_float || matches!(a, Expr::Float(_));
                 let d = num(a)?;
                 if d == 0.0 {
                     return Err("/: division by zero".into());
                 }
                 acc /= d;
             }
-            Ok(Expr::Float(acc))
+            if any_float || acc != (acc as i64) as f64 {
+                Ok(Expr::Float(acc))
+            } else {
+                Ok(Expr::Int(acc as i64))
+            }
         })),
     );
 
@@ -93,17 +105,13 @@ pub fn register_arithmetic(env: Env, heap: &mut Heap) {
             if args.len() != 2 {
                 return Err("%: expects exactly 2 arguments".into());
             }
-            let a = match &args[0] {
-                Expr::Int(n) => *n,
-                _ => return Err("%: arguments must be integers".into()),
-            };
-            let b = match &args[1] {
-                Expr::Int(n) => *n,
-                _ => return Err("%: arguments must be integers".into()),
-            };
-            if b == 0 {
+            let a = num(&args[0])?;
+            let b = num(&args[1])?;
+            if b == 0.0 {
                 return Err("%: division by zero".into());
             }
+            let a = a as i64;
+            let b = b as i64;
             Ok(Expr::Int(a % b))
         })),
     );
@@ -232,7 +240,7 @@ pub fn register_higher_order(env: Env, heap: &mut Heap) {
             };
             let mut result = Vec::with_capacity(list.len());
             for item in list {
-                result.push(apply(f.clone(), &[item.clone()], env, heap)?);
+                result.push(apply(f.clone(), std::slice::from_ref(item), env, heap)?);
             }
             Ok(Expr::List(result))
         })),
@@ -253,7 +261,7 @@ pub fn register_higher_order(env: Env, heap: &mut Heap) {
             };
             let mut result = Vec::new();
             for item in list {
-                let keep = apply(pred.clone(), &[item.clone()], env, heap)?;
+                let keep = apply(pred.clone(), std::slice::from_ref(item), env, heap)?;
                 if is_truthy(&keep) {
                     result.push(item.clone());
                 }

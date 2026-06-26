@@ -30,8 +30,8 @@
 //! offset `0` and then back-patches it once the target instruction is known
 //! (see `compiler.rs`).
 
-use crate::expr::Expr;
-use crate::gc::{GcHandle, Heap};
+use crate::expr::{Expr, BuiltinFn};
+use crate::gc::GcHandle;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -64,7 +64,7 @@ pub enum Value {
     /// the two are semantically equivalent.
     Nil,
     /// A built-in function pointer.
-    Builtin(Rc<dyn Fn(&[Expr], &mut Heap) -> Result<Expr, String>>),
+    Builtin(BuiltinFn),
     /// A closure.
     Closure {
         params: Vec<String>,

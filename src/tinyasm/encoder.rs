@@ -9,6 +9,7 @@ use std::fmt;
 pub enum EncodeError {
     UnsupportedOperand(String),
     InvalidScale(u8),
+    #[allow(dead_code)]
     InvalidDisplacement(String),
     Other(String),
 }
@@ -838,11 +839,10 @@ fn encode_shift(
         }
     }
 
-    if emit_imm {
-        if let Operand::Imm32(imm) = count {
+    if emit_imm
+        && let Operand::Imm32(imm) = count {
             bytes.push(imm as u8);
         }
-    }
     Ok(())
 }
 

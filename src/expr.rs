@@ -3,6 +3,9 @@ use std::rc::Rc;
 
 use crate::gc::{GcHandle, Heap};
 
+/// Type alias for built-in functions.
+pub type BuiltinFn = Rc<dyn Fn(&[Expr], &mut Heap) -> Result<Expr, String>>;
+
 /// Core value/expression type for the Lisp evaluator.
 ///
 /// # Environment representation
@@ -33,7 +36,7 @@ pub enum Expr {
     List(Vec<Expr>),
     /// A built-in function.  Still uses `Rc` because function pointers are
     /// not GC-managed (they hold no `EnvData` references).
-    Func(Rc<dyn Fn(&[Expr], &mut Heap) -> Result<Expr, String>>),
+    Func(BuiltinFn),
     /// A user-defined closure.
     ///
     /// Fields:

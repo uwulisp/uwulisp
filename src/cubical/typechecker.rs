@@ -63,7 +63,7 @@ fn infer_via_reduction(dts: &[Datatype], ctx: &Ctx, t: &Term, original_err: Type
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeError {
     UnboundVariable(Name),
-    TypeMismatch(Term, Term),
+    TypeMismatch(Box<Term>, Box<Term>),
     ExpectedPi(Term),
     ExpectedPath(Term),
     ExpectedUniverse(Term),
@@ -71,7 +71,7 @@ pub enum TypeError {
     ExpectedSigma(Term),
     NotAnInterval(Term),
     CannotInfer(Term),
-    EtaFuelExhausted(Term, Term),
+    EtaFuelExhausted(Box<Term>, Box<Term>),
     Other(String),
     // Inductive types / HITs
     UnknownDatatype(Name),
@@ -160,10 +160,13 @@ impl fmt::Display for TypeError {
 pub fn require_equal(ctx: &Ctx, expected: &Term, got: &Term) -> Result<(), TypeError> {
     match definitionally_equal_ctx_r(ctx, expected, got) {
         EtaResult::Equal => Ok(()),
-        EtaResult::NotEqual => Err(TypeError::TypeMismatch(nbe_eval(expected), nbe_eval(got))),
+        EtaResult::NotEqual => Err(TypeError::TypeMismatch(
+            Box::new(nbe_eval(expected)),
+            Box::new(nbe_eval(got)),
+        )),
         EtaResult::Exhausted => Err(TypeError::EtaFuelExhausted(
-            nbe_eval(expected),
-            nbe_eval(got),
+            Box::new(nbe_eval(expected)),
+            Box::new(nbe_eval(got)),
         )),
     }
 }
@@ -186,16 +189,18 @@ pub fn require_equal_endpt(ctx: &Ctx, expected: &Term, got: &Term) -> Result<(),
             )))
         }
         EtaResult::Exhausted => Err(TypeError::EtaFuelExhausted(
-            nbe_eval(expected),
-            nbe_eval(got),
+            Box::new(nbe_eval(expected)),
+            Box::new(nbe_eval(got)),
         )),
     }
 }
 
+#[allow(dead_code)]
 pub fn require_universe(ctx: &Ctx, t: &Term) -> Result<Level, TypeError> {
     require_universe_dt(&[], ctx, t)
 }
 
+#[allow(dead_code)]
 fn require_universe_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Level, TypeError> {
     let ty = infer_dt(dts, ctx, t)?;
     match nbe_eval(&ty) {
@@ -273,6 +278,7 @@ fn check_interval_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<(), TypeEr
     }
 }
 
+#[allow(dead_code)]
 pub fn require_equiv(ctx: &Ctx, t: &Term) -> Result<(Term, Term), TypeError> {
     require_equiv_dt(&[], ctx, t)
 }
@@ -300,7 +306,7 @@ pub fn apply_literal(lit: &Literal, t: &Term) -> Term {
 
     fn go_i(i: &I, n: i32, val: &I) -> I {
         match i {
-            I::IVar(k) if *k == n => val.clone(),
+            I::Var(k) if *k == n => val.clone(),
             I::Meet(a, b) => I::Meet(Box::new(go_i(a, n, val)), Box::new(go_i(b, n, val))),
             I::Join(a, b) => I::Join(Box::new(go_i(a, n, val)), Box::new(go_i(b, n, val))),
             I::Neg(a) => I::Neg(Box::new(go_i(a, n, val))),
@@ -316,8 +322,8 @@ pub fn apply_literal(lit: &Literal, t: &Term) -> Term {
                 // Substitute the literal into each cube then re-normalise.
                 let subst_lit = |l: &Literal| -> I {
                     match l {
-                        Literal::Pos(k) => go_i(&I::IVar(*k), n, val),
-                        Literal::NegVar(k) => I::Neg(Box::new(go_i(&I::IVar(*k), n, val))),
+                        Literal::Pos(k) => go_i(&I::Var(*k), n, val),
+                        Literal::NegVar(k) => I::Neg(Box::new(go_i(&I::Var(*k), n, val))),
                     }
                 };
                 let subst_cube = |c: &BTreeSet<Literal>| -> I {
@@ -677,7 +683,7 @@ pub fn infer_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Term, TypeError
                             let v = shift(-1, 0, &v);
                             Term::TPath(a_ty, Box::new(u), Box::new(v))
                         }
-                        other => {
+                        _other => {
                             let a_ty = infer_dt(dts, &ctx2, body)?;
                             let u = shift(-1, 0, &apply_literal(&Literal::NegVar(0), body));
                             let v = shift(-1, 0, &apply_literal(&Literal::Pos(0), body));
@@ -694,7 +700,7 @@ pub fn infer_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Term, TypeError
                             nbe_eval(&beta(&body, &Term::TInterval(I::I0))),
                             nbe_eval(&beta(&body, &Term::TInterval(I::I1))),
                         ),
-                        plain => (nbe_eval(&u), nbe_eval(&v)),
+                        _plain => (nbe_eval(&u), nbe_eval(&v)),
                     };
                     check_dt(dts, ctx, x, &x_ty)?;
                     Ok(ret_ty)
@@ -864,8 +870,8 @@ pub fn infer_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Term, TypeError
                         Term::TPath(a, u, v) => {
                             if !definitionally_equal_ctx_r(ctx, &nbe_eval(&a), &a_ty_).is_equal() {
                                 return Err(TypeError::TypeMismatch(
-                                    nbe_eval(&a_ty_),
-                                    nbe_eval(&a),
+                                    Box::new(nbe_eval(&a_ty_)),
+                                    Box::new(nbe_eval(&a)),
                                 ));
                             }
                             check_dt(dts, ctx, &nbe_eval(&u), &a_ty_)?;
@@ -1027,16 +1033,6 @@ pub fn infer_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Term, TypeError
             }
             // Check interval argument.
             check_interval(ctx, r)?;
-            // Compute boundary terms by substituting checked_args into
-            // face0/face1 (which live in a scope of arity ordinary args).
-            let face0 = checked_args
-                .iter()
-                .rev()
-                .fold(sig.face0.clone(), |ty, a| beta(&ty, a));
-            let face1 = checked_args
-                .iter()
-                .rev()
-                .fold(sig.face1.clone(), |ty, a| beta(&ty, a));
             // TPCon(d, pc, args, r) is the path constructor applied at interval
             // position r — it is a POINT of TData(d), not a path.  At the
             // endpoints r=I0 / r=I1 it reduces to face0 / face1 respectively
@@ -1226,19 +1222,6 @@ pub fn infer_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Term, TypeError
                     Box::new(pcon_term),
                 ));
 
-                // Endpoints: substitute i=I0/I1 into pcon, apply motive.
-                let face0_term = nbe_eval(&Term::TPCon(
-                    d.clone(),
-                    pcon_sig.name.clone(),
-                    ord_var.clone(),
-                    Box::new(Term::TInterval(I::I0)),
-                ));
-                let face1_term = nbe_eval(&Term::TPCon(
-                    d.clone(),
-                    pcon_sig.name.clone(),
-                    ord_var.clone(),
-                    Box::new(Term::TInterval(I::I1)),
-                ));
                 let face0_case =
                     eval_elim_face(motive, cases, &pcon_sig.face0, &ord_var_no_i, arity as i32);
                 let face1_case =
@@ -1307,8 +1290,8 @@ fn reduce_pcon_endpoints_dt(dts: &[Datatype], t: &Term) -> Term {
             };
             if is_i0 || is_i1 {
                 // Look up the face value from the PConSig.
-                if let Some(dt) = dts.iter().find(|dt| &dt.name == d) {
-                    if let Some(sig) = dt.find_pcon(pc) {
+                if let Some(dt) = dts.iter().find(|dt| &dt.name == d)
+                    && let Some(sig) = dt.find_pcon(pc) {
                         // face0/face1 are in a scope of sig.arity() ordinary args.
                         // Substitute the checked args into the face term.
                         let reduced_args: Vec<Term> =
@@ -1320,7 +1303,6 @@ fn reduce_pcon_endpoints_dt(dts: &[Datatype], t: &Term) -> Term {
                             .fold(face.clone(), |acc, a| beta(&acc, a));
                         return reduce_pcon_endpoints_dt(dts, &nbe_eval(&face_inst));
                     }
-                }
             }
             // Not at an endpoint (or datatype not found): reduce sub-terms.
             let reduced_args: Vec<Term> =
@@ -1418,8 +1400,8 @@ pub fn check_dt(dts: &[Datatype], ctx: &Ctx, t: &Term, ty: &Term) -> Result<(), 
             match glue {
             Term::TGlue(a_ty, phi_, te) => {
                 check_interval(ctx, phi)?;
-                require_equal(ctx, &nbe_eval(&phi_), &nbe_eval(phi))?;
-                let t_ty = match nbe_eval(&te) {
+                require_equal(ctx, &nbe_eval(phi_), &nbe_eval(phi))?;
+                let t_ty = match nbe_eval(te) {
                     Term::TMkEquiv(dom_a, _, _, _, _, _) => nbe_eval(&dom_a),
                     Term::TEquiv(dom_a, _) => nbe_eval(&dom_a),
                     Term::TPair(te_a, _) => nbe_eval(&te_a),
@@ -1445,7 +1427,7 @@ pub fn check_dt(dts: &[Datatype], ctx: &Ctx, t: &Term, ty: &Term) -> Result<(), 
                     _ => t_ty.clone(),
                 };
                 check_dt(dts, ctx, t_inner, &cap_ty)?;
-                check_dt(dts, ctx, a, &nbe_eval(&a_ty))
+                check_dt(dts, ctx, a, &nbe_eval(a_ty))
             }
             other => Err(TypeError::Other(format!(
                 "glue: expected Glue type, got: {}",
@@ -1463,7 +1445,7 @@ pub fn check_dt(dts: &[Datatype], ctx: &Ctx, t: &Term, ty: &Term) -> Result<(), 
                     other => return Err(TypeError::ExpectedSigma(other)),
                 },
             };
-            check_dt(dts, ctx, a, &nbe_eval(&a_ty))?;
+                            check_dt(dts, ctx, a, &nbe_eval(&a_ty))?;
             check_dt(dts, ctx, b, &nbe_eval(&beta(&b_ty, a)))
         }
 
@@ -1485,8 +1467,8 @@ pub fn check_dt(dts: &[Datatype], ctx: &Ctx, t: &Term, ty: &Term) -> Result<(), 
                 Term::TData(ed) => {
                     if ed != d {
                         return Err(TypeError::TypeMismatch(
-                            expected_ty_nf.clone(),
-                            Term::TData(d.clone()),
+                            Box::new(expected_ty_nf.clone()),
+                            Box::new(Term::TData(d.clone())),
                         ));
                     }
                     ed.clone()
@@ -1559,14 +1541,17 @@ impl EtaResult {
 // Top-level helpers
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 pub fn infer_closed(t: &Term) -> Result<Term, TypeError> {
     infer(&Vec::new(), t)
 }
 
+#[allow(dead_code)]
 pub fn check_closed(t: &Term, ty: &Term) -> Result<(), TypeError> {
     check(&Vec::new(), t, ty)
 }
 
+#[allow(dead_code)]
 pub fn infer_closed_dt(dts: &[Datatype], t: &Term) -> Result<Term, TypeError> {
     infer_dt(dts, &Vec::new(), t)
 }
@@ -1575,6 +1560,7 @@ pub fn check_closed_dt(dts: &[Datatype], t: &Term, ty: &Term) -> Result<(), Type
     check_dt(dts, &Vec::new(), t, ty)
 }
 
+#[allow(dead_code)]
 pub fn report_infer(label: &str, t: &Term) {
     match infer_closed(t) {
         Ok(ty) => println!("  ✓  {}\n       : {}", label, ty),
@@ -1582,6 +1568,7 @@ pub fn report_infer(label: &str, t: &Term) {
     }
 }
 
+#[allow(dead_code)]
 pub fn report_check(label: &str, t: &Term, ty: &Term) {
     match check_closed(t, ty) {
         Ok(()) => println!("  ✓  {}\n       ⊢ {}\n       : {}", label, t, ty),

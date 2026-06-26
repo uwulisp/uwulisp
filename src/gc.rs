@@ -172,11 +172,13 @@ impl Heap {
     /// Set the threshold that controls when `maybe_collect` triggers a
     /// collection.  The default is 1024.  Set to 0 to disable automatic
     /// collection entirely (call `collect` manually).
+    #[allow(dead_code)]
     pub fn set_gc_threshold(&mut self, threshold: usize) {
         self.gc_threshold = threshold;
     }
 
     /// Return the current GC threshold.
+    #[allow(dead_code)]
     pub fn gc_threshold(&self) -> usize {
         self.gc_threshold
     }
@@ -195,12 +197,14 @@ impl Heap {
     /// heap.pop_root(); // child
     /// heap.pop_root(); // env
     /// ```
+    #[allow(dead_code)]
     pub fn push_root(&mut self, root: GcHandle) {
         self.roots.push(root);
     }
 
     /// Pop the most-recently-pushed root.  Panics if the root stack is
     /// empty (indicating an unbalanced push/pop in the caller).
+    #[allow(dead_code)]
     pub fn pop_root(&mut self) {
         self.roots
             .pop()
@@ -208,6 +212,7 @@ impl Heap {
     }
 
     /// Return the number of registered roots.
+    #[allow(dead_code)]
     pub fn root_count(&self) -> usize {
         self.roots.len()
     }
@@ -359,6 +364,7 @@ impl Heap {
     /// # Performance
     /// Uses `get_mut` with `entry()` to avoid double-lookup when the
     /// key is found.
+    #[allow(dead_code)]
     pub fn env_assign(&mut self, handle: GcHandle, name: &str, val: Expr) -> Result<(), String> {
         let mut current = handle;
         loop {
@@ -499,6 +505,7 @@ impl Heap {
 
     /// Like `collect`, but uses the current root stack as the root set.
     /// Returns the number of freed slots.
+    #[allow(dead_code)]
     pub fn collect_registered_roots(&mut self) -> usize {
         if self.roots.is_empty() {
             return 0;
@@ -524,6 +531,7 @@ impl Heap {
 
     /// Like `maybe_collect`, but uses the current root stack.
     /// Returns `true` if a collection was performed.
+    #[allow(dead_code)]
     pub fn maybe_collect_registered_roots(&mut self) -> bool {
         if self.live_count > self.gc_threshold && !self.roots.is_empty() {
             let roots = self.roots.clone();
@@ -544,12 +552,14 @@ impl Heap {
     }
 
     /// Total number of slots ever allocated (including free slots).
+    #[allow(dead_code)]
     pub fn capacity(&self) -> usize {
         self.data.len()
     }
 
     /// Number of live (non-freed) slots. O(1) — tracked incrementally
     /// rather than rescanned on every call.
+    #[allow(dead_code)]
     pub fn live_count(&self) -> usize {
         self.live_count
     }

@@ -50,6 +50,7 @@ impl Env {
     }
 
     /// Look up a datatype by name.
+    #[allow(dead_code)]
     pub fn find_datatype(&self, name: &str) -> Option<&Datatype> {
         self.datatypes.iter().find(|dt| dt.name == name)
     }
@@ -100,11 +101,13 @@ fn subst_global(k: i32, v: &Term, body: &Term) -> Term {
 // ---------------------------------------------------------------------------
 
 /// Infer the type of a term in the context of a `GlobalEnv` (no datatypes).
+#[allow(dead_code)]
 pub fn infer_with_env(genv: &GlobalEnv, t: &Term) -> Result<Term, TypeError> {
     infer(&global_ctx(genv), t)
 }
 
 /// Check a term against a type in the context of a `GlobalEnv` (no datatypes).
+#[allow(dead_code)]
 pub fn check_with_env(genv: &GlobalEnv, t: &Term, ty: &Term) -> Result<(), TypeError> {
     check(&global_ctx(genv), t, ty)
 }

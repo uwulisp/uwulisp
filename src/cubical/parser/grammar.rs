@@ -34,28 +34,6 @@ impl Parser {
         }
     }
 
-    fn parse_program(&mut self) -> Result<Vec<Decl>, ParseError> {
-        let mut decls = Vec::new();
-        while !self.at(&TokenKind::Eof) {
-            let decl = if self.consume_ident("def") {
-                self.parse_def()?
-            } else if self.consume_ident("data") {
-                self.parse_data_decl()?
-            } else if self.consume_ident("import") {
-                self.parse_import()?
-            } else {
-                return Err(self.error_here("expected top-level declaration"));
-            };
-            match &decl {
-                Decl::Def { .. } => {}
-                Decl::Data(dt) => self.datatypes.push(dt.clone()),
-                Decl::Import { .. } => {}
-            }
-            decls.push(decl);
-        }
-        Ok(decls)
-    }
-
     pub(super) fn parse_import(&mut self) -> Result<Decl, ParseError> {
         let path = self.expect_string("expected string literal after 'import'")?;
         Ok(Decl::Import { path })
@@ -701,7 +679,7 @@ impl Parser {
             return Ok(Term::TVar((self.term_env.len() + idx) as i32));
         }
         if let Some(idx) = self.ivar_env.iter().position(|n| n == &name) {
-            return Ok(Term::TInterval(I::IVar(idx as i32)));
+            return Ok(Term::TInterval(I::Var(idx as i32)));
         }
         if let Some((dt, is_path)) = self.find_constructor(&name) {
             if is_path {
@@ -759,20 +737,16 @@ impl Parser {
         if self.is_decl_start() {
             return false;
         }
-        if self.stop_at_with {
-            if let TokenKind::Ident(name) = &self.peek().kind {
-                if name == "with" {
+        if self.stop_at_with
+            && let TokenKind::Ident(name) = &self.peek().kind
+                && name == "with" {
                     return false;
                 }
-            }
-        }
-        if self.stop_at_in {
-            if let TokenKind::Ident(name) = &self.peek().kind {
-                if name == "in" {
+        if self.stop_at_in
+            && let TokenKind::Ident(name) = &self.peek().kind
+                && name == "in" {
                     return false;
                 }
-            }
-        }
         matches!(
             &self.peek().kind,
             TokenKind::Ident(_) | TokenKind::Int(_) | TokenKind::LParen
@@ -855,7 +829,7 @@ fn parse_universe(name: &str) -> Option<i32> {
 fn expect_interval(term: Term, parser: &Parser) -> Result<I, ParseError> {
     match term {
         Term::TInterval(i) => Ok(i),
-        Term::TVar(idx) => Ok(I::IVar(idx)),
+        Term::TVar(idx) => Ok(I::Var(idx)),
         other => Err(parser.error_here(format!("expected interval expression, got {:?}", other))),
     }
 }

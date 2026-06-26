@@ -13,5 +13,31 @@ nix run github:pi-lisp/pi-lisp
 nix shell github:pi-lisp/pi-lisp
 ```
 
+## Testing
+
+Run the full test suite (79 unit tests + 6 integration tests):
+
+```bash
+cargo test
+```
+
+Run example files individually:
+
+```bash
+cargo run --release hello.pi
+cargo run --release hello.pic
+cargo run --release test.pi
+cargo run --release test.pic
+cargo run --release examples.pic
+```
+
+## Code Quality
+
+The project maintains zero Clippy warnings. Run the linter with:
+
+```bash
+cargo clippy
+```
+
 ## document
 [document](https://pi-lisp.github.io)

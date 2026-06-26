@@ -17,11 +17,7 @@ pub fn register_strings(env: Env, heap: &mut Heap) {
             if args.len() != 1 {
                 return Err("string?: expects exactly 1 argument".into());
             }
-            Ok(Expr::Bool(if let Expr::Str(_) = &args[0] {
-                true
-            } else {
-                false
-            }))
+            Ok(Expr::Bool(matches!(&args[0], Expr::Str(_))))
         })),
     );
 
@@ -400,10 +396,7 @@ pub fn register_file(env: Env, heap: &mut Heap) {
                 .create(true)
                 .append(true)
                 .open(path)
-                .and_then(|mut f| {
-                    f.write_all(content.as_bytes())?;
-                    f.write_all(b"\n")
-                })
+                .and_then(|mut f| f.write_all(content.as_bytes()))
                 .map(|_| Expr::List(vec![]))
                 .map_err(|e| format!("file-append: {}: {}", path, e))
         })),

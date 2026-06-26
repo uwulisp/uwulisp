@@ -34,12 +34,6 @@ use machine::{VM, vm_value_to_expr};
 
 // ── Thread-local compile cache ────────────────────────────────────────────────
 
-/// Per-thread compile cache.
-///
-/// Using `thread_local!` means:
-/// * The cache is automatically isolated between threads (no locking needed).
-/// * The cache persists across `vm_eval` calls within the same thread, so the
-///   compilation cost for any given expression is paid at most once.
 thread_local! {
     static CACHE: RefCell<CompileCache> = RefCell::new(CompileCache::new());
 }
@@ -493,5 +487,75 @@ mod tests {
             );
         })
         .unwrap_or(());
+    }
+
+    #[test]
+    fn test_division_preserves_int_when_exact() {
+        let mut heap = Heap::new();
+        let env = builtins::global_env(&mut heap);
+
+        let res = eval_str("(/ 4 2)", &mut heap, env).unwrap();
+        assert!(matches!(res, Expr::Int(n) if n == 2));
+    }
+
+    #[test]
+    fn test_division_returns_float_when_inexact() {
+        let mut heap = Heap::new();
+        let env = builtins::global_env(&mut heap);
+
+        let res = eval_str("(/ 5 2)", &mut heap, env).unwrap();
+        assert!(matches!(res, Expr::Float(n) if (n - 2.5).abs() < 1e-10));
+    }
+
+    #[test]
+    fn test_division_returns_float_when_float_arg() {
+        let mut heap = Heap::new();
+        let env = builtins::global_env(&mut heap);
+
+        let res = eval_str("(/ 4 2.0)", &mut heap, env).unwrap();
+        assert!(matches!(res, Expr::Float(n) if (n - 2.0).abs() < 1e-10));
+    }
+
+    #[test]
+    fn test_modulo_accepts_float() {
+        let mut heap = Heap::new();
+        let env = builtins::global_env(&mut heap);
+
+        let res = eval_str("(% 5.0 2.0)", &mut heap, env).unwrap();
+        assert!(matches!(res, Expr::Int(n) if n == 1));
+    }
+
+    #[test]
+    fn test_negation_overflow_returns_error() {
+        let mut heap = Heap::new();
+        let env = builtins::global_env(&mut heap);
+
+        let res = eval_str("(- -9223372036854775808)", &mut heap, env);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_eval_pic_integration() {
+        let mut heap = Heap::new();
+        let env = builtins::global_env(&mut heap);
+
+        let src = r#"(eval-pic "
+  data Bool =
+    | true : Bool
+    | false : Bool
+  def not : Bool -> Bool =
+    \\b. match b return Bool with
+      | true => false
+      | false => true
+")"#;
+        let res = eval_str(src, &mut heap, env).unwrap();
+        let list = match &res {
+            Expr::List(l) => l,
+            _ => panic!("expected list, got {:?}", res),
+        };
+        assert_eq!(list.len(), 3);
+        assert!(matches!(&list[0], Expr::Str(name) if name == "not"));
+        assert!(matches!(&list[1], Expr::CubicalTerm(_)));
+        assert!(matches!(&list[2], Expr::CubicalTerm(_)));
     }
 }

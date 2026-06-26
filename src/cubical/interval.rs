@@ -11,7 +11,7 @@ use std::fmt;
 pub enum I {
     I0,
     I1,
-    IVar(i32),
+    Var(i32),
     Meet(Box<I>, Box<I>),
     Join(Box<I>, Box<I>),
     Neg(Box<I>),
@@ -22,7 +22,7 @@ impl fmt::Display for I {
         match self {
             I::I0 => write!(f, "0"),
             I::I1 => write!(f, "1"),
-            I::IVar(n) => write!(f, "i{}", n),
+            I::Var(n) => write!(f, "i{}", n),
             I::Meet(i, j) => write!(f, "({} ∧ {})", i, j),
             I::Join(i, j) => write!(f, "({} ∨ {})", i, j),
             I::Neg(i) => write!(f, "¬{}", i),
@@ -47,6 +47,7 @@ impl fmt::Display for Literal {
 
 // DNF = Disjunctive Normal Form: a set of cubes, each cube a set of literals.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[allow(clippy::upper_case_acronyms)]
 pub struct DNF {
     pub cubes: BTreeSet<BTreeSet<Literal>>,
 }
@@ -118,7 +119,7 @@ pub fn eval_interval(i: &I) -> DNF {
     match i {
         I::I0 => dnf_bot(),
         I::I1 => dnf_top(),
-        I::IVar(n) => {
+        I::Var(n) => {
             let mut inner = BTreeSet::new();
             inner.insert(Literal::Pos(*n));
             let mut cubes = BTreeSet::new();
@@ -194,8 +195,8 @@ mod tests {
     #[test]
     fn meet_drops_contradictory_cube() {
         let dnf = eval_interval(&I::Meet(
-            Box::new(I::IVar(0)),
-            Box::new(I::Neg(Box::new(I::IVar(0)))),
+            Box::new(I::Var(0)),
+            Box::new(I::Neg(Box::new(I::Var(0)))),
         ));
 
         assert_eq!(dnf, dnf_bot());

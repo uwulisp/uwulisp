@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::cubical::interval::I;
 use crate::cubical::parser::Decl;
@@ -57,7 +57,7 @@ pub fn py_path_for_module(module_name: &str) -> PathBuf {
     PathBuf::from(format!("{}.py", module_name.to_lowercase()))
 }
 
-pub fn py_path_from_uwuc_path(path: &PathBuf) -> PathBuf {
+pub fn py_path_from_uwuc_path(path: &Path) -> PathBuf {
     py_path_for_module(&module_name_from_path(path))
 }
 
@@ -289,8 +289,8 @@ fn emit_elim(cases: &[ElimCase], scrut: &Term, env: &[Name], ctx: &mut PythonMod
 }
 
 fn try_emit_let(term: &Term, env: &[Name], ctx: &mut PythonModuleCtx) -> Option<String> {
-    if let Term::TApp(f, value) = term {
-        if let Term::TAbs(binder, body) = f.as_ref() {
+    if let Term::TApp(f, value) = term
+        && let Term::TAbs(binder, body) = f.as_ref() {
             let sanitized = lowercase_first(binder);
             let mut env2 = vec![sanitized.clone()];
             env2.extend_from_slice(env);
@@ -301,13 +301,12 @@ fn try_emit_let(term: &Term, env: &[Name], ctx: &mut PythonModuleCtx) -> Option<
                 emit_term(value, env, ctx)
             ));
         }
-    }
     None
 }
 
 fn emit_interval(i: &I, env: &[Name]) -> String {
     match i {
-        I::IVar(n) => env
+        I::Var(n) => env
             .get(*n as usize)
             .cloned()
             .unwrap_or_else(|| format!("i{}", n)),
@@ -485,12 +484,11 @@ fn demo_value(ty: &Term, datatype_info: &HashMap<Name, DatatypeInfo>) -> (String
                 vec![mod_name],
             );
         }
-        if let Some(info) = datatype_info.get(name) {
-            if let Some(con) = info.nullary_constructors.first() {
+        if let Some(info) = datatype_info.get(name)
+            && let Some(con) = info.nullary_constructors.first() {
                 let mod_name = info.module_name.to_lowercase();
                 return (format!("{}.{}", mod_name, con), vec![mod_name]);
             }
-        }
     }
     ("None".to_string(), Vec::new())
 }

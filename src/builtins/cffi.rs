@@ -1,3 +1,5 @@
+#![allow(clippy::missing_transmute_annotations)]
+
 use std::ffi::CString;
 use std::mem::transmute;
 use std::rc::Rc;
@@ -210,7 +212,7 @@ fn mem_ref_impl(args: &[Expr]) -> Result<Expr, String> {
             Ok(Expr::Int(val as i64))
         }
         ":uint8" | ":u8" => {
-            let val = unsafe { std::ptr::read_unaligned(addr as *const u8) };
+            let val = unsafe { std::ptr::read_unaligned(addr) };
             Ok(Expr::Int(val as i64))
         }
         ":int16" | ":i16" => {
@@ -283,7 +285,7 @@ fn mem_set_impl(args: &[Expr]) -> Result<Expr, String> {
         }
         ":uint8" | ":u8" => {
             let val = as_i64(&args[3])? as u8;
-            unsafe { std::ptr::write_unaligned(addr as *mut u8, val) };
+            unsafe { std::ptr::write_unaligned(addr, val) };
             Ok(Expr::List(vec![]))
         }
         ":int16" | ":i16" => {
@@ -401,7 +403,7 @@ pub(crate) fn ccall_impl(args: &[Expr]) -> Result<Expr, String> {
     };
 
     let (ret_type, arg_offset, ret_explicit) = parse_ret_type(args)?;
-    let ncall_args = args.len().checked_sub(arg_offset).unwrap_or(0);
+    let ncall_args = args.len().saturating_sub(arg_offset);
     if ncall_args > 6 {
         return Err("ccall: supports at most 6 arguments".into());
     }
@@ -653,29 +655,25 @@ fn call_mixed(
 ) -> Result<Expr, String> {
     // Handle void return at the top so the per-arity functions are simpler.
     if ret_type == RetType::Void {
-        unsafe {
-            match n {
-                1 => call_mixed_void_1(fn_ptr, pattern, iargs, fargs),
-                2 => call_mixed_void_2(fn_ptr, pattern, iargs, fargs),
-                3 => call_mixed_void_3(fn_ptr, pattern, iargs, fargs),
-                4 => call_mixed_void_4(fn_ptr, pattern, iargs, fargs),
-               5 => call_mixed_void_5(fn_ptr, pattern, iargs, fargs),
-                6 => call_mixed_void_6(fn_ptr, pattern, iargs, fargs),
-                _ => unreachable!(),
-            }
+        match n {
+            1 => call_mixed_void_1(fn_ptr, pattern, iargs, fargs),
+            2 => call_mixed_void_2(fn_ptr, pattern, iargs, fargs),
+            3 => call_mixed_void_3(fn_ptr, pattern, iargs, fargs),
+            4 => call_mixed_void_4(fn_ptr, pattern, iargs, fargs),
+            5 => call_mixed_void_5(fn_ptr, pattern, iargs, fargs),
+            6 => call_mixed_void_6(fn_ptr, pattern, iargs, fargs),
+            _ => unreachable!(),
         }
         return Ok(Expr::List(vec![]));
     }
-    unsafe {
-        match n {
-            1 => call_mixed_1(fn_ptr, pattern, iargs, fargs, ret_float),
-            2 => call_mixed_2(fn_ptr, pattern, iargs, fargs, ret_float),
-            3 => call_mixed_3(fn_ptr, pattern, iargs, fargs, ret_float),
-            4 => call_mixed_4(fn_ptr, pattern, iargs, fargs, ret_float),
-            5 => call_mixed_5(fn_ptr, pattern, iargs, fargs, ret_float),
-            6 => call_mixed_6(fn_ptr, pattern, iargs, fargs, ret_float),
-            _ => unreachable!(),
-        }
+    match n {
+        1 => call_mixed_1(fn_ptr, pattern, iargs, fargs, ret_float),
+        2 => call_mixed_2(fn_ptr, pattern, iargs, fargs, ret_float),
+        3 => call_mixed_3(fn_ptr, pattern, iargs, fargs, ret_float),
+        4 => call_mixed_4(fn_ptr, pattern, iargs, fargs, ret_float),
+        5 => call_mixed_5(fn_ptr, pattern, iargs, fargs, ret_float),
+        6 => call_mixed_6(fn_ptr, pattern, iargs, fargs, ret_float),
+        _ => unreachable!(),
     }
 }
 

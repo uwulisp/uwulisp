@@ -7,8 +7,6 @@
 
 use std::collections::HashMap;
 
-use crate::cubical::syntax::{is_bot_dnf, is_top_dnf};
-use crate::cubical::interval::I;
 use crate::cubical::nbe::nbe_eval;
 use crate::cubical::syntax::{Name, Term, beta, shift};
 
@@ -113,12 +111,14 @@ pub fn and_result(a: EtaResult, b: EtaResult) -> EtaResult {
 // Context-free definitional equality
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 pub fn definitionally_equal(t1: &Term, t2: &Term) -> bool {
     let v1 = nbe_eval(t1);
     let v2 = nbe_eval(t2);
     v1 == v2 || eta_eq(initial_fuel(&v1, &v2), &Vec::new(), &v1, &v2) == EtaResult::Equal
 }
 
+#[allow(dead_code)]
 pub fn definitionally_equal_ctx(ctx: &Ctx, t1: &Term, t2: &Term) -> bool {
     let v1 = nbe_eval(t1);
     let v2 = nbe_eval(t2);
@@ -265,16 +265,14 @@ fn eta_eq_uncached(fuel: usize, ctx: &Ctx, t1: &Term, t2: &Term, memo: &mut EtaM
     // ------------------------------------------------------------------
     // Path boundary reduction (consumes fuel)
     // ------------------------------------------------------------------
-    if let Term::PApp(p, r) = t1 {
-        if let Some(u) = reduce_papp_by_type(ctx, p, r) {
+    if let Term::PApp(p, r) = t1
+        && let Some(u) = reduce_papp_by_type(ctx, p, r) {
             return eta_eq_memo(fuel - 1, ctx, &u, t2, memo);
         }
-    }
-    if let Term::PApp(p, r) = t2 {
-        if let Some(u) = reduce_papp_by_type(ctx, p, r) {
+    if let Term::PApp(p, r) = t2
+        && let Some(u) = reduce_papp_by_type(ctx, p, r) {
             return eta_eq_memo(fuel - 1, ctx, t1, &u, memo);
         }
-    }
 
     // ------------------------------------------------------------------
     // Lambda eta (consumes fuel)

@@ -316,11 +316,10 @@ fn compile_quote(list: &[Expr], chunk: &mut Chunk) -> Result<(), String> {
 }
 
 fn qq_op_expr(expr: &Expr) -> Option<&str> {
-    if let Expr::List(l) = expr {
-        if let Some(Expr::Symbol(s)) = l.first() {
+    if let Expr::List(l) = expr
+        && let Some(Expr::Symbol(s)) = l.first() {
             return Some(s.as_str());
         }
-    }
     None
 }
 
