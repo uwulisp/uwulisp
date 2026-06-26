@@ -47,6 +47,7 @@ pub enum Decl {
     Import { path: String },
 }
 
+#[allow(dead_code)]
 pub fn parse_term(src: &str) -> Result<Term, ParseError> {
     let tokens = Lexer::new(src).lex()?;
     let mut parser = Parser::new(tokens);
@@ -55,6 +56,7 @@ pub fn parse_term(src: &str) -> Result<Term, ParseError> {
     Ok(term)
 }
 
+#[allow(dead_code)]
 pub fn parse_program(src: &str) -> Result<Vec<Decl>, ParseError> {
     let mut parser = ProgramParser::new(src)?;
     let mut decls = Vec::new();
@@ -116,6 +118,7 @@ impl ProgramParser {
 ///
 /// Returns the list of successfully checked definitions (name, type, value)
 /// together with the collected datatypes, or a human-readable error string.
+#[allow(dead_code)]
 pub fn typecheck_program(
     src: &str,
 ) -> Result<

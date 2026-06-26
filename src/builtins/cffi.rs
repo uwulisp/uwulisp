@@ -653,29 +653,25 @@ fn call_mixed(
 ) -> Result<Expr, String> {
     // Handle void return at the top so the per-arity functions are simpler.
     if ret_type == RetType::Void {
-        unsafe {
-            match n {
-                1 => call_mixed_void_1(fn_ptr, pattern, iargs, fargs),
-                2 => call_mixed_void_2(fn_ptr, pattern, iargs, fargs),
-                3 => call_mixed_void_3(fn_ptr, pattern, iargs, fargs),
-                4 => call_mixed_void_4(fn_ptr, pattern, iargs, fargs),
-               5 => call_mixed_void_5(fn_ptr, pattern, iargs, fargs),
-                6 => call_mixed_void_6(fn_ptr, pattern, iargs, fargs),
-                _ => unreachable!(),
-            }
+        match n {
+            1 => call_mixed_void_1(fn_ptr, pattern, iargs, fargs),
+            2 => call_mixed_void_2(fn_ptr, pattern, iargs, fargs),
+            3 => call_mixed_void_3(fn_ptr, pattern, iargs, fargs),
+            4 => call_mixed_void_4(fn_ptr, pattern, iargs, fargs),
+            5 => call_mixed_void_5(fn_ptr, pattern, iargs, fargs),
+            6 => call_mixed_void_6(fn_ptr, pattern, iargs, fargs),
+            _ => unreachable!(),
         }
         return Ok(Expr::List(vec![]));
     }
-    unsafe {
-        match n {
-            1 => call_mixed_1(fn_ptr, pattern, iargs, fargs, ret_float),
-            2 => call_mixed_2(fn_ptr, pattern, iargs, fargs, ret_float),
-            3 => call_mixed_3(fn_ptr, pattern, iargs, fargs, ret_float),
-            4 => call_mixed_4(fn_ptr, pattern, iargs, fargs, ret_float),
-            5 => call_mixed_5(fn_ptr, pattern, iargs, fargs, ret_float),
-            6 => call_mixed_6(fn_ptr, pattern, iargs, fargs, ret_float),
-            _ => unreachable!(),
-        }
+    match n {
+        1 => call_mixed_1(fn_ptr, pattern, iargs, fargs, ret_float),
+        2 => call_mixed_2(fn_ptr, pattern, iargs, fargs, ret_float),
+        3 => call_mixed_3(fn_ptr, pattern, iargs, fargs, ret_float),
+        4 => call_mixed_4(fn_ptr, pattern, iargs, fargs, ret_float),
+        5 => call_mixed_5(fn_ptr, pattern, iargs, fargs, ret_float),
+        6 => call_mixed_6(fn_ptr, pattern, iargs, fargs, ret_float),
+        _ => unreachable!(),
     }
 }
 

@@ -34,28 +34,6 @@ impl Parser {
         }
     }
 
-    fn parse_program(&mut self) -> Result<Vec<Decl>, ParseError> {
-        let mut decls = Vec::new();
-        while !self.at(&TokenKind::Eof) {
-            let decl = if self.consume_ident("def") {
-                self.parse_def()?
-            } else if self.consume_ident("data") {
-                self.parse_data_decl()?
-            } else if self.consume_ident("import") {
-                self.parse_import()?
-            } else {
-                return Err(self.error_here("expected top-level declaration"));
-            };
-            match &decl {
-                Decl::Def { .. } => {}
-                Decl::Data(dt) => self.datatypes.push(dt.clone()),
-                Decl::Import { .. } => {}
-            }
-            decls.push(decl);
-        }
-        Ok(decls)
-    }
-
     pub(super) fn parse_import(&mut self) -> Result<Decl, ParseError> {
         let path = self.expect_string("expected string literal after 'import'")?;
         Ok(Decl::Import { path })

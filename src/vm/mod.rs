@@ -34,12 +34,6 @@ use machine::{VM, vm_value_to_expr};
 
 // ── Thread-local compile cache ────────────────────────────────────────────────
 
-/// Per-thread compile cache.
-///
-/// Using `thread_local!` means:
-/// * The cache is automatically isolated between threads (no locking needed).
-/// * The cache persists across `vm_eval` calls within the same thread, so the
-///   compilation cost for any given expression is paid at most once.
 thread_local! {
     static CACHE: RefCell<CompileCache> = RefCell::new(CompileCache::new());
 }

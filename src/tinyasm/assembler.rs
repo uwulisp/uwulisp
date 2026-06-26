@@ -18,6 +18,7 @@ impl Assembler {
     }
 
     /// Enable verbose per-instruction debug output on stderr.
+    #[allow(dead_code)]
     pub fn with_debug(mut self, debug: bool) -> Self {
         self.debug = debug;
         self

@@ -192,10 +192,12 @@ pub fn require_equal_endpt(ctx: &Ctx, expected: &Term, got: &Term) -> Result<(),
     }
 }
 
+#[allow(dead_code)]
 pub fn require_universe(ctx: &Ctx, t: &Term) -> Result<Level, TypeError> {
     require_universe_dt(&[], ctx, t)
 }
 
+#[allow(dead_code)]
 fn require_universe_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Level, TypeError> {
     let ty = infer_dt(dts, ctx, t)?;
     match nbe_eval(&ty) {
@@ -273,6 +275,7 @@ fn check_interval_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<(), TypeEr
     }
 }
 
+#[allow(dead_code)]
 pub fn require_equiv(ctx: &Ctx, t: &Term) -> Result<(Term, Term), TypeError> {
     require_equiv_dt(&[], ctx, t)
 }
@@ -677,7 +680,7 @@ pub fn infer_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Term, TypeError
                             let v = shift(-1, 0, &v);
                             Term::TPath(a_ty, Box::new(u), Box::new(v))
                         }
-                        other => {
+                        _other => {
                             let a_ty = infer_dt(dts, &ctx2, body)?;
                             let u = shift(-1, 0, &apply_literal(&Literal::NegVar(0), body));
                             let v = shift(-1, 0, &apply_literal(&Literal::Pos(0), body));
@@ -694,7 +697,7 @@ pub fn infer_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Term, TypeError
                             nbe_eval(&beta(&body, &Term::TInterval(I::I0))),
                             nbe_eval(&beta(&body, &Term::TInterval(I::I1))),
                         ),
-                        plain => (nbe_eval(&u), nbe_eval(&v)),
+                        _plain => (nbe_eval(&u), nbe_eval(&v)),
                     };
                     check_dt(dts, ctx, x, &x_ty)?;
                     Ok(ret_ty)
@@ -1027,16 +1030,6 @@ pub fn infer_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Term, TypeError
             }
             // Check interval argument.
             check_interval(ctx, r)?;
-            // Compute boundary terms by substituting checked_args into
-            // face0/face1 (which live in a scope of arity ordinary args).
-            let face0 = checked_args
-                .iter()
-                .rev()
-                .fold(sig.face0.clone(), |ty, a| beta(&ty, a));
-            let face1 = checked_args
-                .iter()
-                .rev()
-                .fold(sig.face1.clone(), |ty, a| beta(&ty, a));
             // TPCon(d, pc, args, r) is the path constructor applied at interval
             // position r — it is a POINT of TData(d), not a path.  At the
             // endpoints r=I0 / r=I1 it reduces to face0 / face1 respectively
@@ -1226,19 +1219,6 @@ pub fn infer_dt(dts: &[Datatype], ctx: &Ctx, t: &Term) -> Result<Term, TypeError
                     Box::new(pcon_term),
                 ));
 
-                // Endpoints: substitute i=I0/I1 into pcon, apply motive.
-                let face0_term = nbe_eval(&Term::TPCon(
-                    d.clone(),
-                    pcon_sig.name.clone(),
-                    ord_var.clone(),
-                    Box::new(Term::TInterval(I::I0)),
-                ));
-                let face1_term = nbe_eval(&Term::TPCon(
-                    d.clone(),
-                    pcon_sig.name.clone(),
-                    ord_var.clone(),
-                    Box::new(Term::TInterval(I::I1)),
-                ));
                 let face0_case =
                     eval_elim_face(motive, cases, &pcon_sig.face0, &ord_var_no_i, arity as i32);
                 let face1_case =
@@ -1559,14 +1539,17 @@ impl EtaResult {
 // Top-level helpers
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 pub fn infer_closed(t: &Term) -> Result<Term, TypeError> {
     infer(&Vec::new(), t)
 }
 
+#[allow(dead_code)]
 pub fn check_closed(t: &Term, ty: &Term) -> Result<(), TypeError> {
     check(&Vec::new(), t, ty)
 }
 
+#[allow(dead_code)]
 pub fn infer_closed_dt(dts: &[Datatype], t: &Term) -> Result<Term, TypeError> {
     infer_dt(dts, &Vec::new(), t)
 }
@@ -1575,6 +1558,7 @@ pub fn check_closed_dt(dts: &[Datatype], t: &Term, ty: &Term) -> Result<(), Type
     check_dt(dts, &Vec::new(), t, ty)
 }
 
+#[allow(dead_code)]
 pub fn report_infer(label: &str, t: &Term) {
     match infer_closed(t) {
         Ok(ty) => println!("  ✓  {}\n       : {}", label, ty),
@@ -1582,6 +1566,7 @@ pub fn report_infer(label: &str, t: &Term) {
     }
 }
 
+#[allow(dead_code)]
 pub fn report_check(label: &str, t: &Term, ty: &Term) {
     match check_closed(t, ty) {
         Ok(()) => println!("  ✓  {}\n       ⊢ {}\n       : {}", label, t, ty),

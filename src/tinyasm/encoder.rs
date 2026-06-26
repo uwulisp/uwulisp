@@ -9,6 +9,7 @@ use std::fmt;
 pub enum EncodeError {
     UnsupportedOperand(String),
     InvalidScale(u8),
+    #[allow(dead_code)]
     InvalidDisplacement(String),
     Other(String),
 }
