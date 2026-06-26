@@ -1376,4 +1376,171 @@ mod tests {
             crate::cubical::syntax::show_term(&[], &result)
         );
     }
+
+    #[test]
+    fn varying_pi_domain_with_non_dependent_codomain_reduces() {
+        // transport (⟨i⟩ Π (x : F@i) → U0) (λ x. U0)
+        // where F varies with i so F@0 ≠ F@1.
+        // Domain varies, codomain is constant (U0).
+        // Uses the non-dependent codomain variant: λ a. transport (⟨i⟩ U0) (U0)
+        let body = Term::TPi(
+            "x".to_string(),
+            b(Term::TApp(b(Term::TVar(1)), b(Term::TVar(0)))), // F@i
+            b(Term::TUniv(0)),
+        );
+        let fam = Term::PLam("i".to_string(), b(body));
+        let arg = Term::TAbs("x".to_string(), b(Term::TUniv(0)));
+        let term = Term::TTransport(b(fam), b(arg));
+        let result = nbe_eval(&term);
+
+        assert!(
+            matches!(&result, Term::TAbs(_, _)),
+            "expected TAbs, got: {}",
+            crate::cubical::syntax::show_term(&[], &result)
+        );
+        fn no_inner_transport(t: &Term) -> bool {
+            match t {
+                Term::TTransport(_, _) => false,
+                Term::TAbs(_, b) => no_inner_transport(b),
+                Term::PLam(_, b) => no_inner_transport(b),
+                _ => true,
+            }
+        }
+        assert!(
+            no_inner_transport(&result),
+            "result should not contain TTransport: {}",
+            crate::cubical::syntax::show_term(&[], &result)
+        );
+    }
+
+    #[test]
+    fn varying_pi_domain_with_dependent_codomain_reduces() {
+        // transport (⟨i⟩ Π (x : F@i) → (U0 → x)) (λ x y. x)
+        // where F varies with i so F@0 ≠ F@1.
+        // Domain varies AND codomain (U0 → x) depends on x.
+        // This exercises the full dependent Pi transport formula with fill:
+        //   λ y. transp (⟨i⟩ (U0 → fill F y₀ i)) (f (transp (⟨j⟩ F (~j)) y))
+        let body = Term::TPi(
+            "x".to_string(),
+            b(Term::TApp(b(Term::TVar(1)), b(Term::TVar(0)))), // F@i
+            b(Term::TPi(
+                "y".to_string(),
+                b(Term::TUniv(0)),
+                // Inside inner TPi: TVar(0)=y, TVar(1)=x
+                b(Term::TVar(1)),  // → x (return type references x)
+            )),
+        );
+        let fam = Term::PLam("i".to_string(), b(body));
+        let arg = Term::TAbs(
+            "x".to_string(),
+            b(Term::TAbs("y".to_string(), b(Term::TVar(1)))),
+        );  // λ x. λ y. x
+        let term = Term::TTransport(b(fam), b(arg));
+        let result = nbe_eval(&term);
+
+        assert!(
+            matches!(&result, Term::TAbs(_, _)),
+            "expected TAbs, got: {}",
+            crate::cubical::syntax::show_term(&[], &result)
+        );
+        fn no_transport(t: &Term) -> bool {
+            match t {
+                Term::TTransport(_, _) => false,
+                Term::TAbs(_, b) => no_transport(b),
+                Term::PLam(_, b) => no_transport(b),
+                _ => true,
+            }
+        }
+        assert!(
+            no_transport(&result),
+            "result should not contain TTransport: {}",
+            crate::cubical::syntax::show_term(&[], &result)
+        );
+    }
+
+    #[test]
+    fn varying_pi_domain_with_varying_codomain_depending_on_x() {
+        // transport (⟨i⟩ Π (x : F@i) → (G@i → x)) (λ x y. x)
+        // where both F and G vary with i (two independent path variables).
+        // Domain varies, codomain (G@i → x) depends on both i and x.
+        let body = Term::TPi(
+            "x".to_string(),
+            b(Term::TApp(b(Term::TVar(2)), b(Term::TVar(0)))), // F@i (TVar(2)=F, TVar(0)=i)
+            b(Term::TPi(
+                "y".to_string(),
+                // In outer TPi body: TVar(0)=x, TVar(1)=i, TVar(2)=F, TVar(3)=G
+                b(Term::TApp(b(Term::TVar(3)), b(Term::TVar(1)))), // G@i
+                b(Term::TVar(1)),  // → x (TVar(1)=x in inner TPi body)
+            )),
+        );
+        let fam = Term::PLam("i".to_string(), b(body));
+        let arg = Term::TAbs(
+            "x".to_string(),
+            b(Term::TAbs("y".to_string(), b(Term::TVar(1)))),
+        );  // λ x. λ y. x
+        let term = Term::TTransport(b(fam), b(arg));
+        let result = nbe_eval(&term);
+
+        assert!(
+            matches!(&result, Term::TAbs(_, _)),
+            "expected TAbs, got: {}",
+            crate::cubical::syntax::show_term(&[], &result)
+        );
+        fn no_transport(t: &Term) -> bool {
+            match t {
+                Term::TTransport(_, _) => false,
+                Term::TAbs(_, b) => no_transport(b),
+                Term::PLam(_, b) => no_transport(b),
+                _ => true,
+            }
+        }
+        assert!(
+            no_transport(&result),
+            "result should not contain TTransport: {}",
+            crate::cubical::syntax::show_term(&[], &result)
+        );
+    }
+
+    #[test]
+    fn varying_pi_domain_with_codomain_using_both_x_and_i() {
+        // transport (⟨i⟩ Π (x : F@i) → (F@i → x)) (λ x y. x)
+        // where F varies with i.
+        // Domain varies, codomain (F@i → x) depends on BOTH x and the interval i.
+        // This tests the full formula where the codomain type references i.
+        let body = Term::TPi(
+            "x".to_string(),
+            b(Term::TApp(b(Term::TVar(1)), b(Term::TVar(0)))), // F@i
+            b(Term::TPi(
+                "y".to_string(),
+                b(Term::TApp(b(Term::TVar(2)), b(Term::TVar(1)))), // F@i (in inner scope: TVar(1)=i, TVar(2)=F)
+                b(Term::TVar(1)),  // → x
+            )),
+        );
+        let fam = Term::PLam("i".to_string(), b(body));
+        let arg = Term::TAbs(
+            "x".to_string(),
+            b(Term::TAbs("y".to_string(), b(Term::TVar(1)))),
+        );  // λ x. λ y. x
+        let term = Term::TTransport(b(fam), b(arg));
+        let result = nbe_eval(&term);
+
+        assert!(
+            matches!(&result, Term::TAbs(_, _)),
+            "expected TAbs, got: {}",
+            crate::cubical::syntax::show_term(&[], &result)
+        );
+        fn no_transport(t: &Term) -> bool {
+            match t {
+                Term::TTransport(_, _) => false,
+                Term::TAbs(_, b) => no_transport(b),
+                Term::PLam(_, b) => no_transport(b),
+                _ => true,
+            }
+        }
+        assert!(
+            no_transport(&result),
+            "result should not contain TTransport: {}",
+            crate::cubical::syntax::show_term(&[], &result)
+        );
+    }
 }
