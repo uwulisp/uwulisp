@@ -8,7 +8,7 @@ pub mod transpile;
 pub mod typechecker;
 
 pub use transpile::{
-    transpile, write_output,
+    transpile, transpile_rust, write_output,
 };
 
 use std::collections::HashSet;

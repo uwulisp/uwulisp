@@ -1,6 +1,7 @@
-//! Transpile `.pic` cubical surface programs to type-erased Python.
+//! Transpile `.pic` cubical surface programs to type-erased Python or Rust.
 
 mod python;
+pub mod rust;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -127,6 +128,83 @@ pub fn transpile_source(root_path: &Path, source: &str) -> Result<TranspileOutpu
     Ok(TranspileOutput {
         modules,
         prelude: None,
+    })
+}
+
+/// Read and transpile a `.pic` file to Rust.
+pub fn transpile_rust(path: impl AsRef<Path>) -> Result<TranspileOutput, TranspileError> {
+    let path = path.as_ref();
+    let source = std::fs::read_to_string(path)?;
+    transpile_rust_source(path, &source)
+}
+
+/// Transpile source (rooted at `root_path`) to Rust.
+pub fn transpile_rust_source(
+    root_path: &Path,
+    source: &str,
+) -> Result<TranspileOutput, TranspileError> {
+    let import_base = root_path.parent().unwrap_or_else(|| Path::new("."));
+    let mut collector = ImportCollector::new(import_base);
+    collector.collect_file(root_path, source)?;
+
+    let mut modules = Vec::new();
+    let mut datatype_info = HashMap::new();
+
+    for file in &collector.files {
+        let module_name = rust::module_name_from_path(&file.uwuc_path);
+        for (name, info) in rust::collect_datatype_info(&file.decls, &module_name) {
+            datatype_info.insert(name, info);
+        }
+        let mut ctx = rust::RustModuleCtx::from_decls(module_name.clone(), &file.decls);
+        let source_comment = file
+            .uwuc_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("input.pic");
+        let rs_source = rust::emit_module(&mut ctx, &file.decls, source_comment);
+        modules.push(EmittedModule {
+            path: rust::rs_path_from_uwuc_path(&file.uwuc_path),
+            source: rs_source,
+        });
+    }
+
+    let root_canonical = canonical_import_path(root_path);
+    if let Some(root_file) = collector
+        .files
+        .iter()
+        .find(|f| canonical_import_path(&f.uwuc_path) == root_canonical)
+        && let Some((entry_name, entry_ty)) =
+            root_file.decls.iter().find_map(|decl| match decl {
+                Decl::Def { name, ty, .. } if name == "main" => Some((name.as_str(), ty)),
+                _ => None,
+            })
+    {
+        let entry_module = rust::module_name_from_path(&root_file.uwuc_path);
+        let root_comment = root_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("input.pic");
+        let driver = rust::emit_main_driver(
+            root_comment,
+            &entry_module,
+            entry_name,
+            entry_ty,
+            &datatype_info,
+        );
+        modules.push(EmittedModule {
+            path: PathBuf::from("main.rs"),
+            source: driver,
+        });
+    }
+
+    let prelude = Some(EmittedModule {
+        path: PathBuf::from("prelude.rs"),
+        source: rust::emit_prelude_file(),
+    });
+
+    Ok(TranspileOutput {
+        modules,
+        prelude,
     })
 }
 
