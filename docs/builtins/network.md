@@ -70,8 +70,59 @@ Requires exactly four arguments. The request is sent with `Content-Type: applica
 
 ---
 
+### `http-put`
+Performs a blocking HTTP PUT request with the given body and returns a 3-element list of `(status headers body)`.
+
+```
+(http-put host port path body)  →  (List String String String)
+```
+
+Requires exactly four arguments. The request is sent with `Content-Type: application/x-www-form-urlencoded`.
+
+**Example**
+```
+(http-put "api.example.com" 80 "/data/42" "value=updated")
+  →  ("HTTP/1.1 200 OK" "..." "")
+```
+
+---
+
+### `http-patch`
+Performs a blocking HTTP PATCH request with the given body and returns a 3-element list of `(status headers body)`.
+
+```
+(http-patch host port path body)  →  (List String String String)
+```
+
+Requires exactly four arguments. The request is sent with `Content-Type: application/x-www-form-urlencoded`.
+
+**Example**
+```
+(http-patch "api.example.com" 80 "/data/42" "field=newvalue")
+  →  ("HTTP/1.1 200 OK" "..." "")
+```
+
+---
+
+### `http-delete`
+Performs a blocking HTTP DELETE request and returns a 3-element list of `(status headers body)`.
+
+```
+(http-delete host port path)  →  (List String String String)
+```
+
+Requires exactly three arguments.
+
+**Example**
+```
+(http-delete "api.example.com" 80 "/data/42")
+  →  ("HTTP/1.1 204 No Content" "" "")
+```
+
+---
+
 ### `http-status`
-Extracts the numeric HTTP status code from a response list returned by `http-get` or `http-post`.
+Extracts the numeric HTTP status code from a response list returned by any `http-*` request.
 
 ```
 (http-status response)  →  Number
@@ -87,7 +138,7 @@ Requires exactly one argument. Raises an error if the argument is not a valid re
 ---
 
 ### `http-body`
-Extracts the body string from a response list returned by `http-get` or `http-post`.
+Extracts the body string from a response list returned by any `http-*` request.
 
 ```
 (http-body response)  →  String
@@ -98,4 +149,21 @@ Requires exactly one argument. Raises an error if the argument is not a valid re
 **Example**
 ```
 (http-body (http-get "example.com" 80 "/"))  →  "<html>...</html>"
+```
+
+---
+
+### `http-headers`
+Extracts the raw headers string from a response list returned by any `http-*` request.
+
+```
+(http-headers response)  →  String
+```
+
+Requires exactly one argument. Raises an error if the argument is not a valid response list.
+
+**Example**
+```
+(http-headers (http-get "example.com" 80 "/"))
+  →  "Content-Type: text/html\r\nContent-Length: 1256\r\n..."
 ```

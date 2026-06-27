@@ -19,20 +19,12 @@ fn str_arg<'a>(expr: &'a Expr, fn_name: &str) -> Result<&'a str, String> {
     }
 }
 
-/// Pull an `f64` that represents a port number (1-65535).
+/// Pull a port number (1-65535) from an `Expr::Int`.
 fn port_arg(expr: &Expr, fn_name: &str) -> Result<u16, String> {
     match expr {
         Expr::Int(n) => {
-            let p = *n as u64;
-            if p == 0 || p > 65535 {
-                Err(format!("{}: port must be 1-65535, got {}", fn_name, p))
-            } else {
-                Ok(p as u16)
-            }
-        }
-        Expr::Float(n) => {
-            let p = *n as u64;
-            if p == 0 || p > 65535 {
+            let p = *n;
+            if p < 1 || p > 65535 {
                 Err(format!("{}: port must be 1-65535, got {}", fn_name, p))
             } else {
                 Ok(p as u16)
@@ -47,7 +39,6 @@ fn port_arg(expr: &Expr, fn_name: &str) -> Result<u16, String> {
 
 /// Build a minimal HTTP/1.1 request string.
 fn build_http_request(method: &str, host: &str, path: &str, body: Option<&str>) -> String {
-    let body_bytes = body.unwrap_or("");
     let mut req = format!(
         "{method} {path} HTTP/1.1\r\n\
          Host: {host}\r\n\
@@ -60,11 +51,11 @@ fn build_http_request(method: &str, host: &str, path: &str, body: Option<&str>) 
              Content-Length: {}\r\n",
             b.len()
         ));
-    } else {
-        req.push_str("Content-Length: 0\r\n");
     }
     req.push_str("\r\n");
-    req.push_str(body_bytes);
+    if let Some(b) = body {
+        req.push_str(b);
+    }
     req
 }
 
@@ -79,6 +70,24 @@ fn parse_http_response(raw: &str) -> (String, String, String) {
     (status, headers, body)
 }
 
+/// Connect to `host:port`, optionally setting a read timeout.
+fn tcp_connect_stream(
+    host: &str,
+    port: u16,
+    timeout: Option<Duration>,
+    fn_name: &str,
+) -> Result<TcpStream, String> {
+    let addr = format!("{}:{}", host, port);
+    let stream = TcpStream::connect(&addr)
+        .map_err(|e| format!("{}: connect to {} failed: {}", fn_name, addr, e))?;
+    if let Some(d) = timeout {
+        stream
+            .set_read_timeout(Some(d))
+            .map_err(|e| format!("{}: set timeout failed: {}", fn_name, e))?;
+    }
+    Ok(stream)
+}
+
 /// Execute a blocking TCP+HTTP exchange, return the response as an
 /// `Expr::List([status, headers, body])` where every element is `Expr::Str`.
 fn http_request(
@@ -88,29 +97,18 @@ fn http_request(
     path: &str,
     body: Option<&str>,
 ) -> Result<Expr, String> {
-    let addr = format!("{}:{}", host, port);
-    let mut stream = TcpStream::connect(&addr).map_err(|e| {
-        format!(
-            "http-{}: connect to {} failed: {}",
-            method.to_lowercase(),
-            addr,
-            e
-        )
-    })?;
-
-    stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .map_err(|e| format!("http-{}: set timeout failed: {}", method.to_lowercase(), e))?;
+    let fn_name = format!("http-{}", method.to_lowercase());
+    let mut stream = tcp_connect_stream(host, port, Some(Duration::from_secs(10)), &fn_name)?;
 
     let request = build_http_request(method, host, path, body);
     stream
         .write_all(request.as_bytes())
-        .map_err(|e| format!("http-{}: write failed: {}", method.to_lowercase(), e))?;
+        .map_err(|e| format!("{}: write failed: {}", fn_name, e))?;
 
     let mut response = String::new();
     stream
         .read_to_string(&mut response)
-        .map_err(|e| format!("http-{}: read failed: {}", method.to_lowercase(), e))?;
+        .map_err(|e| format!("{}: read failed: {}", fn_name, e))?;
 
     let (status, headers, body_out) = parse_http_response(&response);
     Ok(Expr::List(vec![
@@ -152,13 +150,7 @@ fn register_tcp(env: Env, heap: &mut Heap) {
             let port = port_arg(&args[1], "tcp-connect")?;
             let message = str_arg(&args[2], "tcp-connect")?;
 
-            let addr = format!("{}:{}", host, port);
-            let mut stream = TcpStream::connect(&addr)
-                .map_err(|e| format!("tcp-connect: could not connect to {}: {}", addr, e))?;
-
-            stream
-                .set_read_timeout(Some(Duration::from_secs(10)))
-                .map_err(|e| format!("tcp-connect: set timeout failed: {}", e))?;
+            let mut stream = tcp_connect_stream(host, port, Some(Duration::from_secs(10)), "tcp-connect")?;
 
             stream
                 .write_all(message.as_bytes())
@@ -191,9 +183,7 @@ fn register_tcp(env: Env, heap: &mut Heap) {
             let port = port_arg(&args[1], "tcp-send")?;
             let message = str_arg(&args[2], "tcp-send")?;
 
-            let addr = format!("{}:{}", host, port);
-            let mut stream = TcpStream::connect(&addr)
-                .map_err(|e| format!("tcp-send: could not connect to {}: {}", addr, e))?;
+            let mut stream = tcp_connect_stream(host, port, None, "tcp-send")?;
 
             let n = stream
                 .write(message.as_bytes())
@@ -209,55 +199,50 @@ fn register_tcp(env: Env, heap: &mut Heap) {
 // ---------------------------------------------------------------------------
 
 fn register_http(env: Env, heap: &mut Heap) {
-    // (http-get host port path) -> (list status headers body)
-    //
-    // Performs a blocking HTTP GET and returns a 3-element list:
-    //   0 - status line  e.g. "HTTP/1.1 200 OK"
-    //   1 - raw headers block
-    //   2 - response body
-    //
-    // Example: (http-get "example.com" 80 "/index.html")
-    env_set(
-        heap,
-        env,
-        "http-get".into(),
-        Expr::Func(Rc::new(|args, _heap| {
-            if args.len() != 3 {
-                return Err("http-get: expects exactly 3 arguments (host port path)".into());
-            }
-            let host = str_arg(&args[0], "http-get")?;
-            let port = port_arg(&args[1], "http-get")?;
-            let path = str_arg(&args[2], "http-get")?;
-            http_request("GET", host, port, path, None)
-        })),
-    );
+    // Register an HTTP method function (GET, POST, PUT, PATCH, DELETE).
+    fn register_method(
+        env: Env,
+        heap: &mut Heap,
+        name: &'static str,
+        method: &'static str,
+        has_body: bool,
+    ) {
+        let expected = if has_body { 4 } else { 3 };
+        env_set(
+            heap,
+            env,
+            name.into(),
+            Expr::Func(Rc::new(move |args, _heap| {
+                if args.len() != expected {
+                    return Err(format!(
+                        "{}: expects exactly {} arguments (host port path{})",
+                        name,
+                        expected,
+                        if has_body { " body)" } else { ")" }
+                    ));
+                }
+                let host = str_arg(&args[0], name)?;
+                let port = port_arg(&args[1], name)?;
+                let path = str_arg(&args[2], name)?;
+                let body = if has_body {
+                    Some(str_arg(&args[3], name)?)
+                } else {
+                    None
+                };
+                http_request(method, host, port, path, body)
+            })),
+        );
+    }
 
-    // (http-post host port path body) -> (list status headers body)
-    //
-    // Performs a blocking HTTP POST with the given body string.
-    // Content-Type is set to application/x-www-form-urlencoded.
-    //
-    // Example: (http-post "api.example.com" 80 "/data" "key=value&foo=bar")
-    env_set(
-        heap,
-        env,
-        "http-post".into(),
-        Expr::Func(Rc::new(|args, _heap| {
-            if args.len() != 4 {
-                return Err("http-post: expects exactly 4 arguments (host port path body)".into());
-            }
-            let host = str_arg(&args[0], "http-post")?;
-            let port = port_arg(&args[1], "http-post")?;
-            let path = str_arg(&args[2], "http-post")?;
-            let body = str_arg(&args[3], "http-post")?;
-            http_request("POST", host, port, path, Some(body))
-        })),
-    );
+    register_method(env, heap, "http-get", "GET", false);
+    register_method(env, heap, "http-post", "POST", true);
+    register_method(env, heap, "http-put", "PUT", true);
+    register_method(env, heap, "http-patch", "PATCH", true);
+    register_method(env, heap, "http-delete", "DELETE", false);
 
     // (http-status response) -> status-code (number)
     //
-    // Extracts the numeric status code from the status line returned by
-    // http-get / http-post.
+    // Extracts the numeric status code from the status line.
     //
     // Example: (http-status (http-get "example.com" 80 "/"))  => 200
     env_set(
@@ -278,41 +263,48 @@ fn register_http(env: Env, heap: &mut Heap) {
                 }
             };
             let status_line = str_arg(&response[0], "http-status")?;
-            // e.g. "HTTP/1.1 200 OK" -> "200"
             let code_str = status_line
                 .split_whitespace()
                 .nth(1)
                 .ok_or_else(|| format!("http-status: malformed status line: {:?}", status_line))?;
-            let code: f64 = code_str
+            let code: i64 = code_str
                 .parse()
                 .map_err(|_| format!("http-status: non-numeric status code: {:?}", code_str))?;
-            Ok(Expr::Int(code as i64))
+            Ok(Expr::Int(code))
         })),
     );
 
     // (http-body response) -> body-string
-    //
-    // Extracts the body string from a response list.
-    //
-    // Example: (http-body (http-get "example.com" 80 "/"))
     env_set(
         heap,
         env,
         "http-body".into(),
-        Expr::Func(Rc::new(|args, _heap| {
-            if args.len() != 1 {
-                return Err("http-body: expects exactly 1 argument (response)".into());
-            }
-            let response = match &args[0] {
-                Expr::List(l) if l.len() == 3 => l,
-                other => {
-                    return Err(format!(
-                        "http-body: expected a 3-element response list, got {:?}",
-                        other
-                    ));
-                }
-            };
-            Ok(response[2].clone())
-        })),
+        Expr::Func(Rc::new(response_accessor(2, "http-body"))),
     );
+
+    // (http-headers response) -> headers-string
+    env_set(
+        heap,
+        env,
+        "http-headers".into(),
+        Expr::Func(Rc::new(response_accessor(1, "http-headers"))),
+    );
+}
+
+fn response_accessor(index: usize, name: &'static str) -> impl Fn(&[Expr], &mut Heap) -> Result<Expr, String> {
+    move |args, _heap| {
+        if args.len() != 1 {
+            return Err(format!("{}: expects exactly 1 argument (response)", name));
+        }
+        let response = match &args[0] {
+            Expr::List(l) if l.len() == 3 => l,
+            other => {
+                return Err(format!(
+                    "{}: expected a 3-element response list, got {:?}",
+                    name, other
+                ));
+            }
+        };
+        Ok(response[index].clone())
+    }
 }
