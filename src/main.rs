@@ -168,10 +168,54 @@ fn main() {
                             .any(|m| m.path.file_stem().and_then(|s| s.to_str()) == Some("Main"))
                         {
                             println!(
-                                "run: cd {} && ghc -o app Main.hs && ./app",
+                                "run: cd {} && python main.py",
                                 out_dir.display()
                             );
                         }
+                    }
+                    Err(err) => {
+                        eprintln!("Transpile error: {}", err);
+                        process::exit(1);
+                    }
+                }
+            } else if args[i] == "--cubical-transpile-rust" {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --cubical-transpile-rust requires a filename argument");
+                    process::exit(1);
+                }
+                let input_path = Path::new(&args[i]);
+                let mut out_dir = input_path
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .to_path_buf();
+                i += 1;
+                if i < args.len() && args[i] == "-o" {
+                    i += 1;
+                    if i >= args.len() {
+                        eprintln!("Error: -o requires an output directory argument");
+                        process::exit(1);
+                    }
+                    out_dir = PathBuf::from(&args[i]);
+                }
+                match cubical::transpile_rust(input_path) {
+                    Ok(output) => {
+                        if let Err(err) = cubical::write_output(&output, &out_dir) {
+                            eprintln!("Transpile write error: {}", err);
+                            process::exit(1);
+                        }
+                        for module in &output.modules {
+                            println!(
+                                "wrote {}",
+                                out_dir
+                                    .join(module.path.file_name().unwrap_or_default())
+                                    .display()
+                            );
+                        }
+                        println!(
+                            "run: cd {} && rustc main.rs && ./main",
+                            out_dir.display()
+                        );
                     }
                     Err(err) => {
                         eprintln!("Transpile error: {}", err);
