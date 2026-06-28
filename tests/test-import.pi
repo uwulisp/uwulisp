@@ -1,0 +1,6 @@
+(import "lib/clos.pi")
+(print "loaded clos")
+(defclass point ()
+  ((x :initarg :x)
+   (y :initarg :y)))
+(print "defined class")

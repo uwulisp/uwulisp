@@ -376,6 +376,15 @@ impl<'h> VM<'h> {
                     // explicit LoadConst(Nil) afterwards.
                 }
 
+                // ── AssignVar ────────────────────────────────────────────────
+                Op::AssignVar(name) => {
+                    let val = self.pop()?;
+                    let env = self.frames[frame_idx].env;
+                    let expr = self.vm_value_to_expr_inner(val)?;
+                    self.heap.env_assign(env, &name, expr)
+                        .map_err(|e| format!("{}: {}", name, e))?;
+                }
+
                 // ── Pop ──────────────────────────────────────────────────────
                 Op::Pop => {
                     self.pop()?;
