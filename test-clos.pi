@@ -1,0 +1,77 @@
+;; Test CLOS implementation
+(import "lib/clos.pi")
+
+;; Test 1: Define a simple class
+(print "Test 1: defclass")
+(defclass point ()
+  ((x :initarg :x)
+   (y :initarg :y)))
+(print "  point class defined")
+
+;; Test 2: make-instance and slot-value
+(print "Test 2: make-instance and slot-value")
+(define p (make-instance 'point (list :x 10 :y 20)))
+(print "  instance created:")
+(print (slot-value p 'x))
+(print (slot-value p 'y))
+
+;; Test 3: set-slot-value!
+(print "Test 3: set-slot-value!")
+(define p2 (set-slot-value! p 'x 99))
+(print "  original x:")
+(print (slot-value p 'x))
+(print "  modified x:")
+(print (slot-value p2 'x))
+
+;; Test 4: defgeneric and defmethod
+(print "Test 4: defgeneric and defmethod")
+(defgeneric describe)
+(defmethod describe ((p point))
+  (print "  This is a POINT"))
+
+(print "  describe point:")
+(describe p)
+(print "  describe 42:")
+(describe 42)
+
+;; Test 5: class hierarchy
+(print "Test 5: class hierarchy")
+(defclass 3d-point (point)
+  ((z :initarg :z)))
+
+(define p3 (make-instance '3d-point (list :x 1 :y 2 :z 3)))
+(print "  3d-point slots:")
+(print (slot-value p3 'x))
+(print (slot-value p3 'y))
+(print (slot-value p3 'z))
+
+;; Test 6: method dispatch with hierarchy
+(print "Test 6: method dispatch with hierarchy")
+(defgeneric area)
+(defmethod area ((p point))
+  0)
+
+(defmethod area ((p 3d-point))
+  (* (slot-value p 'x) (slot-value p 'y)))
+
+(print "  area of point:")
+(print (area (make-instance 'point (list :x 5 :y 5))))
+(print "  area of 3d-point:")
+(print (area (make-instance '3d-point (list :x 3 :y 4 :z 0))))
+
+;; Test 7: :before, :after methods
+(print "Test 7: before/after methods")
+(defgeneric logging-describe)
+(defmethod logging-describe ((p point))
+  (print "  primary method"))
+
+(defmethod-before logging-describe ((p point))
+  (print "  before method"))
+
+(defmethod-after logging-describe ((p point))
+  (print "  after method"))
+
+(print "  calling logging-describe:")
+(logging-describe (make-instance 'point (list :x 0 :y 0)))
+
+(print "CLOS tests completed!")

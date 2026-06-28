@@ -554,8 +554,7 @@ fn compile_set(
         other => return Err(format!("set!: expected a symbol name, got {:?}", other)),
     };
     compile_expr(&list[2], chunk, heap, env, false)?;
-    // Emit StoreVar; the VM will distinguish set! vs define by context if needed.
-    chunk.emit(Op::StoreVar(name));
+    chunk.emit(Op::AssignVar(name));
     // set! returns ()
     chunk.emit(Op::LoadConst(Value::Nil));
     Ok(())
@@ -1126,7 +1125,7 @@ fn is_compilable_rec(expr: &Expr, qq_depth: usize, heap: &Heap, env: GcHandle) -
                     match s.as_str() {
                         "unquote" | "unquote-splicing" => return false,
                         // defmacro / defstruct / ccall always fall back to the tree-walker.
-                        "defmacro" | "defstruct" | "ccall" => return false,
+                        "defmacro" | "defstruct" | "ccall" | "import" => return false,
                         "lambda" => {
                             return items.iter().all(|e| is_compilable_rec(e, 0, heap, env));
                         }

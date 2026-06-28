@@ -1,0 +1,69 @@
+;; Test first half of clos.pi
+(define caar (lambda (x) (car (car x))))
+(define cadr (lambda (x) (car (cdr x))))
+(define cdar (lambda (x) (cdr (car x))))
+(define cddr (lambda (x) (cdr (cdr x))))
+(define caddr (lambda (x) (car (cdr (cdr x)))))
+(define cdddr (lambda (x) (cdr (cdr (cdr x)))))
+(define cadddr (lambda (x) (car (cdr (cdr (cdr x))))))
+
+(define map (lambda (fn lst)
+  (if (null? lst) ()
+      (cons (fn (car lst)) (map fn (cdr lst))))))
+
+(define filter (lambda (fn lst)
+  (if (null? lst) ()
+      (if (fn (car lst))
+          (cons (car lst) (filter fn (cdr lst)))
+          (filter fn (cdr lst))))))
+
+(define fold (lambda (fn init lst)
+  (if (null? lst) init
+      (fold fn (fn (car lst) init) (cdr lst)))))
+
+(define reverse (lambda (lst)
+  (fold (lambda (x acc) (cons x acc)) () lst)))
+
+(define length (lambda (lst)
+  (if (null? lst) 0
+      (+ 1 (length (cdr lst))))))
+
+(define list-ref (lambda (lst n)
+  (if (= n 0) (car lst)
+      (list-ref (cdr lst) (- n 1)))))
+
+(define list-tail (lambda (lst n)
+  (if (= n 0) lst
+      (list-tail (cdr lst) (- n 1)))))
+
+(define take (lambda (lst n)
+  (if (= n 0) ()
+      (cons (car lst) (take (cdr lst) (- n 1))))))
+
+(define drop (lambda (lst n)
+  (list-tail lst n)))
+
+(define memq (lambda (item lst)
+  (if (null? lst) ()
+      (if (equal? item (car lst)) lst
+          (memq item (cdr lst))))))
+
+(define remove-duplicates (lambda (lst)
+  (if (null? lst) ()
+      (if (memq (car lst) (cdr lst))
+          (remove-duplicates (cdr lst))
+          (cons (car lst) (remove-duplicates (cdr lst)))))))
+
+(define append (lambda (a b)
+  (if (null? a) b
+      (cons (car a) (append (cdr a) b)))))
+
+(define any (lambda (fn lst)
+  (if (null? lst) #f
+      (if (fn (car lst)) #t (any fn (cdr lst))))))
+
+(define every (lambda (fn lst)
+  (if (null? lst) #t
+      (if (not (fn (car lst))) #f (every fn (cdr lst))))))
+
+(print "all utility fns ok")

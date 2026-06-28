@@ -185,6 +185,7 @@ fn eval_step(expr: &Expr, env: Env, heap: &mut Heap) -> Result<Step, String> {
                     "let*" => return eval_let_star(list, env, heap),
                     "for" => return eval_for(list, env, heap),
                     "defstruct" => return Ok(Step::Value(eval_defstruct(list, env, heap)?)),
+                    "set!" => return Ok(Step::Value(eval_set(list, env, heap)?)),
                     "ccall" => return Ok(Step::Value(eval_ccall(list, env, heap)?)),
 
                     // ── explicit tail-call form ────────────────────────────
@@ -698,6 +699,24 @@ fn eval_defstruct(list: &[Expr], env: Env, heap: &mut Heap) -> Result<Expr, Stri
         );
     }
 
+    Ok(Expr::List(vec![]))
+}
+
+// ── set! ───────────────────────────────────────────────────────────────────────
+
+fn eval_set(list: &[Expr], env: Env, heap: &mut Heap) -> Result<Expr, String> {
+    if list.len() != 3 {
+        return Err(format!(
+            "set! expects 2 arguments (name value), got {}",
+            list.len() - 1
+        ));
+    }
+    let name = match &list[1] {
+        Expr::Symbol(s) => s.clone(),
+        other => return Err(format!("set!: expected a symbol name, got {:?}", other)),
+    };
+    let val = eval(&list[2], env, heap)?;
+    heap.env_assign(env, &name, val)?;
     Ok(Expr::List(vec![]))
 }
 

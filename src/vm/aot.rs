@@ -97,6 +97,7 @@ impl Writer {
             Op::PushEnv => { self.w_u8(15); }
             Op::PopEnv => { self.w_u8(16); }
             Op::StoreSelf(s) => { self.w_u8(17); self.w_str(s); }
+            Op::AssignVar(s) => { self.w_u8(18); self.w_str(s); }
         }
         Ok(())
     }
@@ -249,6 +250,7 @@ impl<'a> Reader<'a> {
             15 => Ok(Op::PushEnv),
             16 => Ok(Op::PopEnv),
             17 => { let s = self.r_str()?; Ok(Op::StoreSelf(s)) }
+            18 => { let s = self.r_str()?; Ok(Op::AssignVar(s)) }
             _ => Err(format!("Unknown Op tag: {}", tag)),
         }
     }

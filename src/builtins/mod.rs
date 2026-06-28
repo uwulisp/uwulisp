@@ -2,6 +2,7 @@
 mod asm;
 mod base;
 pub(crate) mod cffi;
+mod clos;
 mod editor;
 mod network;
 mod utils;
@@ -107,6 +108,8 @@ pub fn global_env(heap: &mut Heap) -> Env {
     editor::register_string_extras(env, heap);
     editor::register_read_key(env, heap);
     editor::register_load(env, heap);
+
+    clos::register_clos(env, heap);
 
     register_aot(env, heap);
 

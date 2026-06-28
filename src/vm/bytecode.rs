@@ -202,6 +202,11 @@ pub enum Op {
     /// environment frame (equivalent to `define`).
     StoreVar(String),
 
+    /// Pop the top of the stack and assign to `name`, walking the parent
+    /// chain to find an existing binding (equivalent to `set!`).
+    /// Returns an error if no existing binding is found.
+    AssignVar(String),
+
     /// Unconditional jump to an absolute instruction index within this chunk.
     Jump(usize),
 

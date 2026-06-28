@@ -1,0 +1,2 @@
+(import "lib/clos.pi")
+(print "ok")
