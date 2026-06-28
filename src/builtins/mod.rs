@@ -102,7 +102,11 @@ pub fn global_env(heap: &mut Heap) -> Env {
     #[cfg(target_arch = "x86_64")]
     asm::register_load_asm_parallel(env, heap);
     editor::register_terminal(env, heap);
+    editor::register_command_line(env, heap);
+    editor::register_equal(env, heap);
     editor::register_string_extras(env, heap);
+    editor::register_read_key(env, heap);
+    editor::register_load(env, heap);
 
     register_aot(env, heap);
 

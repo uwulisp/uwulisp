@@ -18,5 +18,7 @@ pi-lisp supports **complex numbers** as a first-class numeric type. You can writ
 - `1+2i`, `3-4i` — rectangular form
 - `5i`, `-i`, `i` — pure imaginary / imaginary unit
 
+> **Note:** Because `i` is parsed as the imaginary unit, it cannot be used as a variable name. Use `ii`, `idx`, or another name for loop variables.
+
 All arithmetic (`+`, `-`, `*`, `/`) transparently promotes real numbers to complex when any argument is complex. The builtins `real-part`, `imag-part`, `magnitude`, `angle`, `make-rectangular`, and `make-polar` provide further complex-number operations. See the [Arithmetic](arithmetic/) page for details.
 

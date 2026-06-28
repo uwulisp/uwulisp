@@ -1,0 +1,164 @@
+;; ── List utilities ──────────────────────────────────────────────────────
+
+(define list-tail (lambda (lst n)
+  (if (= n 0) lst
+    (list-tail (cdr lst) (- n 1)))))
+
+(define list-ref (lambda (lst n)
+  (car (list-tail lst n))))
+
+(define take (lambda (lst n)
+  (if (or (= n 0) (null? lst)) ()
+    (cons (car lst) (take (cdr lst) (- n 1))))))
+
+(define append (lambda (a b)
+  (if (null? a) b
+    (cons (car a) (append (cdr a) b)))))
+
+(define concat (lambda (lists)
+  (if (null? lists) ()
+    (append (car lists) (concat (cdr lists))))))
+
+(define range (lambda (n)
+  (if (= n 0) ()
+    (append (range (- n 1)) (list (- n 1))))))
+
+(define rev-help (lambda (acc lst)
+  (if (null? lst) acc
+    (rev-help (cons (car lst) acc) (cdr lst)))))
+
+(define reverse (lambda (lst)
+  (rev-help () lst)))
+
+;; ── String utilities ────────────────────────────────────────────────────
+
+(define string-join (lambda (strings sep)
+  (if (null? strings) ""
+    (fold (lambda (acc s) (string-append acc sep s))
+          (car strings) (cdr strings)))))
+
+(define string-pad-right (lambda (s len)
+  (if (>= (string-length s) len) s
+    (string-append s (substring "                              " 0 (- len (string-length s)))))))
+
+;; ── Buffer representation ───────────────────────────────────────────────
+;; Buffer: (lines row col top filename modified)
+
+(define buf-lines     (lambda (b) (list-ref b 0)))
+(define buf-row       (lambda (b) (list-ref b 1)))
+(define buf-col       (lambda (b) (list-ref b 2)))
+(define buf-top       (lambda (b) (list-ref b 3)))
+(define buf-filename  (lambda (b) (list-ref b 4)))
+(define buf-modified  (lambda (b) (list-ref b 5)))
+
+(define buf-set-lines    (lambda (b v) (list v (buf-row b) (buf-col b) (buf-top b) (buf-filename b) (buf-modified b))))
+(define buf-set-row      (lambda (b v) (list (buf-lines b) v (buf-col b) (buf-top b) (buf-filename b) (buf-modified b))))
+(define buf-set-col      (lambda (b v) (list (buf-lines b) (buf-row b) v (buf-top b) (buf-filename b) (buf-modified b))))
+(define buf-set-top      (lambda (b v) (list (buf-lines b) (buf-row b) (buf-col b) v (buf-filename b) (buf-modified b))))
+(define buf-set-filename (lambda (b v) (list (buf-lines b) (buf-row b) (buf-col b) (buf-top b) v (buf-modified b))))
+(define buf-set-modified (lambda (b v) (list (buf-lines b) (buf-row b) (buf-col b) (buf-top b) (buf-filename b) v)))
+
+(define buf-line-count (lambda (b) (length (buf-lines b))))
+(define buf-line-len (lambda (b) (string-length (list-ref (buf-lines b) (buf-row b)))))
+(define buf-current-line (lambda (b) (list-ref (buf-lines b) (buf-row b))))
+(define buf-at-eol (lambda (b) (>= (buf-col b) (buf-line-len b))))
+
+(define buf-at-end (lambda (b)
+  (and (>= (buf-row b) (- (buf-line-count b) 1))
+       (>= (buf-col b) (buf-line-len b)))))
+
+(define buf-clamp (lambda (b)
+  (let ((lines (buf-lines b))
+        (row (buf-row b))
+        (col (buf-col b)))
+    (let ((r (min (max row 0) (- (length lines) 1)))
+          (c (min (max col 0) (string-length (list-ref lines (min (max row 0) (- (length lines) 1)))))))
+      (buf-set-col (buf-set-row b r) c)))))
+
+(define buf-ensure-visible (lambda (b height)
+  (let ((top (buf-top b))
+        (row (buf-row b)))
+    (cond
+      ((< row top) (buf-set-top b row))
+      ((>= row (+ top (- height 1))) (buf-set-top b (+ (- row height) 1)))
+      (#t b)))))
+
+;; ── Buffer creation ─────────────────────────────────────────────────────
+
+(define make-buffer (lambda () (list (list "") 0 0 0 #f #f)))
+
+(define buffer-load (lambda (path)
+  (let ((content (file-read path)))
+    (let ((lines (string-split content "\n")))
+      (let ((trimmed (if (and (> (length lines) 0) (equal? (car (reverse lines)) ""))
+                        (reverse (cdr (reverse lines)))
+                        lines)))
+        (let ((final (if (= (length trimmed) 0) (list "") trimmed)))
+          (list final 0 0 0 path #f)))))))
+
+(define buffer-save (lambda (b)
+  (let ((content (string-join (buf-lines b) "\n")))
+    (file-write (buf-filename b) content)
+    (buf-set-modified b #f))))
+
+(define buffer-name (lambda (b)
+  (let ((f (buf-filename b)))
+    (if f f "*scratch*"))))
+
+;; ── Buffer editing ──────────────────────────────────────────────────────
+
+(define buffer-insert-char (lambda (b ch)
+  (let ((lines (buf-lines b))
+        (row (buf-row b))
+        (col (buf-col b)))
+    (let ((line (list-ref lines row)))
+      (let ((new-line (string-append (substring line 0 col) (string ch) (substring line col (string-length line)))))
+        (let ((new-lines (append (take lines row) (cons new-line (list-tail lines (+ row 1))))))
+          (buf-set-modified (buf-set-col (buf-set-lines b new-lines) (+ col 1)) #t)))))))
+
+(define buffer-newline (lambda (b)
+  (let ((lines (buf-lines b))
+        (row (buf-row b))
+        (col (buf-col b)))
+    (let ((line (list-ref lines row)))
+      (let ((left (substring line 0 col))
+            (right (substring line col (string-length line))))
+        (let ((new-lines (append (take lines row) (cons left (cons right (list-tail lines (+ row 1)))))))
+          (buf-set-modified (buf-set-col (buf-set-row (buf-set-lines b new-lines) (+ row 1)) 0) #t)))))))
+
+(define buffer-backspace (lambda (b)
+  (let ((lines (buf-lines b))
+        (row (buf-row b))
+        (col (buf-col b)))
+    (cond
+      ((and (= row 0) (= col 0)) b)
+      ((= col 0)
+       (let ((prev-line (list-ref lines (- row 1)))
+             (cur-line (list-ref lines row)))
+         (let ((joined (string-append prev-line cur-line))
+               (prev-len (string-length prev-line)))
+           (let ((new-lines (append (take lines (- row 1)) (cons joined (list-tail lines (+ row 1))))))
+             (buf-set-modified (buf-set-col (buf-set-row (buf-set-lines b new-lines) (- row 1)) prev-len) #t)))))
+      (#t
+       (let ((line (list-ref lines row)))
+         (let ((new-line (string-append (substring line 0 (- col 1)) (substring line col (string-length line)))))
+           (let ((new-lines (append (take lines row) (cons new-line (list-tail lines (+ row 1))))))
+             (buf-set-modified (buf-set-col (buf-set-lines b new-lines) (- col 1)) #t)))))))))
+
+(define buffer-delete (lambda (b)
+  (let ((lines (buf-lines b))
+        (row (buf-row b))
+        (col (buf-col b)))
+    (cond
+      ((buf-at-end b) b)
+      ((< col (buf-line-len b))
+       (let ((line (list-ref lines row)))
+         (let ((new-line (string-append (substring line 0 col) (substring line (+ col 1) (string-length line)))))
+           (let ((new-lines (append (take lines row) (cons new-line (list-tail lines (+ row 1))))))
+             (buf-set-modified (buf-set-lines b new-lines) #t)))))
+      (#t
+       (let ((cur-line (list-ref lines row))
+             (next-line (list-ref lines (+ row 1))))
+         (let ((joined (string-append cur-line next-line)))
+           (let ((new-lines (append (take lines row) (cons joined (list-tail lines (+ row 2))))))
+             (buf-set-modified (buf-set-lines b new-lines) #t)))))))))

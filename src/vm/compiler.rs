@@ -556,6 +556,8 @@ fn compile_set(
     compile_expr(&list[2], chunk, heap, env, false)?;
     // Emit StoreVar; the VM will distinguish set! vs define by context if needed.
     chunk.emit(Op::StoreVar(name));
+    // set! returns ()
+    chunk.emit(Op::LoadConst(Value::Nil));
     Ok(())
 }
 

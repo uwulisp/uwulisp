@@ -6,6 +6,8 @@ use crate::{
     env::{Env, env_set},
     expr::Expr,
     gc::Heap,
+    reader::parse_all,
+    vm::vm_eval,
 };
 
 pub fn register_terminal(env: Env, heap: &mut Heap) {
@@ -118,7 +120,80 @@ pub fn register_terminal(env: Env, heap: &mut Heap) {
     );
 }
 
+pub fn register_command_line(env: Env, heap: &mut Heap) {
+    // (command-line) → list of argument strings (excluding the program name)
+    env_set(
+        heap,
+        env,
+        "command-line".into(),
+        Expr::Func(Rc::new(|args, _heap| {
+            if !args.is_empty() {
+                return Err("command-line: expects 0 arguments".into());
+            }
+            let raw: Vec<String> = std::env::args().skip(1).collect();
+            let list: Vec<Expr> = raw.into_iter().map(Expr::Str).collect();
+            Ok(Expr::List(list))
+        })),
+    );
+}
+
+pub fn register_equal(env: Env, heap: &mut Heap) {
+    // (equal? a b) — structural equality for any two values
+    env_set(
+        heap,
+        env,
+        "equal?".into(),
+        Expr::Func(Rc::new(|args, _heap| {
+            if args.len() != 2 {
+                return Err("equal?: expects exactly 2 arguments".into());
+            }
+            Ok(Expr::Bool(expr_equal(&args[0], &args[1])))
+        })),
+    );
+}
+
+fn expr_equal(a: &Expr, b: &Expr) -> bool {
+    match (a, b) {
+        (Expr::Int(an), Expr::Int(bn)) => an == bn,
+        (Expr::Float(af), Expr::Float(bf)) => (af - bf).abs() < f64::EPSILON,
+        (Expr::Complex(ra, ia), Expr::Complex(rb, ib)) => {
+            (ra - rb).abs() < f64::EPSILON && (ia - ib).abs() < f64::EPSILON
+        }
+        (Expr::Bool(ab), Expr::Bool(bb)) => ab == bb,
+        (Expr::Str(as_), Expr::Str(bs_)) => as_ == bs_,
+        (Expr::Symbol(as_), Expr::Symbol(bs_)) => as_ == bs_,
+        (Expr::List(a_list), Expr::List(b_list)) => {
+            a_list.len() == b_list.len()
+                && a_list.iter().zip(b_list.iter()).all(|(x, y)| expr_equal(x, y))
+        }
+        _ => false,
+    }
+}
+
 pub fn register_string_extras(env: Env, heap: &mut Heap) {
+    // (string ch ...) — convert integer codepoints to a string
+    env_set(
+        heap,
+        env,
+        "string".into(),
+        Expr::Func(Rc::new(|args, _heap| {
+            let mut s = String::new();
+            for arg in args {
+                match arg {
+                    Expr::Int(n) => {
+                        if let Some(ch) = char::from_u32(*n as u32) {
+                            s.push(ch);
+                        } else {
+                            return Err(format!("string: invalid codepoint {}", n));
+                        }
+                    }
+                    other => return Err(format!("string: expected integers, got {:?}", other)),
+                }
+            }
+            Ok(Expr::Str(s))
+        })),
+    );
+
     // (string-ref s index) → int (Unicode codepoint), or -1 if out of range
     env_set(
         heap,
@@ -193,6 +268,149 @@ pub fn register_string_extras(env: Env, heap: &mut Heap) {
             Ok(Expr::Bool(s.contains(sub)))
         })),
     );
+}
+
+pub fn register_load(env: Env, heap: &mut Heap) {
+    // (load path) — load and evaluate a pi-lisp source file, return last value
+    env_set(
+        heap,
+        env,
+        "load".into(),
+        Expr::Func(Rc::new(move |args, heap| {
+            if args.len() != 1 {
+                return Err("load: expects exactly 1 argument (a file path)".into());
+            }
+            let path = str_arg(&args[0])?.to_string();
+            let source = std::fs::read_to_string(&path)
+                .map_err(|e| format!("load: {}", e))?;
+            let exprs = parse_all(&source)?;
+            let mut result = Expr::List(vec![]);
+            for expr in &exprs {
+                result = vm_eval(expr, env, heap)?;
+            }
+            Ok(result)
+        })),
+    );
+}
+
+pub fn register_read_key(env: Env, heap: &mut Heap) {
+    // (read-key) — read a single keypress, return an integer code
+    // Regular bytes/control chars return their ASCII value (0-255).
+    // Special keys return negative codes:
+    //   -1  EOF
+    //   -2  up arrow      -3  down arrow
+    //   -4  right arrow    -5  left arrow
+    //   -6  home           -7  end
+    //   -8  page-up        -9  page-down
+    //  -10  delete (Del)  -11  escape (Esc key alone)
+    env_set(
+        heap,
+        env,
+        "read-key".into(),
+        Expr::Func(Rc::new(|args, _heap| {
+            if !args.is_empty() {
+                return Err("read-key: expects 0 arguments".into());
+            }
+            Ok(Expr::Int(read_key_impl()?))
+        })),
+    );
+}
+
+#[cfg(unix)]
+fn read_key_impl() -> Result<i64, String> {
+    use std::io::Read;
+
+    fn read_byte() -> Result<i64, String> {
+        let mut buf = [0u8];
+        match std::io::stdin().read_exact(&mut buf) {
+            Ok(()) => Ok(buf[0] as i64),
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(-1),
+            Err(e) => Err(format!("read-key: {}", e)),
+        }
+    }
+
+    fn poll_stdin(timeout_ms: i32) -> Result<bool, String> {
+        let mut pfd = libc::pollfd {
+            fd: libc::STDIN_FILENO,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let ret = unsafe { libc::poll(&mut pfd, 1, timeout_ms) };
+        if ret < 0 {
+            Err(format!("read-key: poll failed: {}", std::io::Error::last_os_error()))
+        } else {
+            Ok(ret > 0)
+        }
+    }
+
+    let b = read_byte()?;
+    if b != 27 {
+        // Not ESC — return as-is (backspace=127, enter=13, tab=9)
+        return Ok(b);
+    }
+
+    // ESC pressed — check if more data follows
+    if !poll_stdin(10)? {
+        return Ok(-11); // Escape key alone
+    }
+
+    // Read the next byte
+    let b2 = read_byte()?;
+    if b2 == -1 {
+        return Ok(-11);
+    }
+
+    if b2 == 91 {
+        // CSI sequence: ESC [
+        let b3 = read_byte()?;
+        if b3 == -1 { return Ok(-11); }
+        match b3 {
+            65 => Ok(-2),   // A = up
+            66 => Ok(-3),   // B = down
+            67 => Ok(-4),   // C = right
+            68 => Ok(-5),   // D = left
+            72 => Ok(-6),   // H = home
+            70 => Ok(-7),   // F = end
+            49 => {         // 1 = possible home (1~), etc.
+                let b4 = read_byte()?;
+                if b4 == 126 { Ok(-10) } else { Ok(-11) } // 1~ = home (treat as delete for now)
+            }
+            51 => {          // 3~ = Delete
+                let b4 = read_byte()?;
+                if b4 == 126 { Ok(-10) } else { Ok(-11) }
+            }
+            53 => {          // 5~ = Page Up
+                let b4 = read_byte()?;
+                if b4 == 126 { Ok(-8) } else { Ok(-11) }
+            }
+            54 => {          // 6~ = Page Down
+                let b4 = read_byte()?;
+                if b4 == 126 { Ok(-9) } else { Ok(-11) }
+            }
+            _ => Ok(-11),
+        }
+    } else if b2 == 79 {
+        // SS3 sequence: ESC O
+        let b3 = read_byte()?;
+        if b3 == -1 { return Ok(-11); }
+        match b3 {
+            72 => Ok(-6),   // H = home
+            70 => Ok(-7),   // F = end
+            _ => Ok(-11),
+        }
+    } else {
+        Ok(-11) // stray ESC
+    }
+}
+
+#[cfg(not(unix))]
+fn read_key_impl() -> Result<i64, String> {
+    let mut buf = [0u8];
+    match std::io::stdin().read_exact(&mut buf) {
+        Ok(()) => Ok(buf[0] as i64),
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(-1),
+        Err(e) => Err(format!("read-key: {}", e)),
+    }
 }
 
 // ── Platform-specific helpers ────────────────────────────────────────────

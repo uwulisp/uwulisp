@@ -1,0 +1,374 @@
+;; ── Initialization ──────────────────────────────────────────────────────
+(load "pimacs/core.pi")
+
+;; ── Key code constants ──────────────────────────────────────────────────
+(define KEY-UP       -2)
+(define KEY-DOWN     -3)
+(define KEY-RIGHT    -4)
+(define KEY-LEFT     -5)
+(define KEY-HOME     -6)
+(define KEY-END      -7)
+(define KEY-PAGE-UP  -8)
+(define KEY-PAGE-DN  -9)
+(define KEY-DELETE  -10)
+(define KEY-ESC     -11)
+
+(define C-a 1)  (define C-b 2)  (define C-c 3)  (define C-d 4)
+(define C-e 5)  (define C-f 6)  (define C-g 7)  (define C-h 8)
+(define C-i 9)  (define C-j 10) (define C-k 11) (define C-l 12)
+(define C-m 13) (define C-n 14) (define C-o 15) (define C-p 16)
+(define C-q 17) (define C-r 18) (define C-s 19) (define C-t 20)
+(define C-u 21) (define C-v 22) (define C-w 23) (define C-x 24)
+(define C-y 25) (define C-z 26)
+
+(define KEY-TAB 9)
+(define KEY-ENTER 13)
+(define KEY-BACKSPACE 127)
+
+;; ── Global state ────────────────────────────────────────────────────────
+(define *quit-requested* #f)
+(define *last-key* 0)
+(define *prefix-key* -1)
+(define *term-size* (list 24 80))
+
+;; ── Display functions ───────────────────────────────────────────────────
+(define display-clear (lambda ()
+  (write "\x1b[2J")))
+
+(define display-home (lambda ()
+  (write "\x1b[H")))
+
+(define display-move-to (lambda (row col)
+  (write (string-append "\x1b[" (number->string (+ row 1)) ";" (number->string (+ col 1)) "H"))))
+
+(define display-cursor-hide (lambda ()
+  (write "\x1b[?25l")))
+
+(define display-cursor-show (lambda ()
+  (write "\x1b[?25h")))
+
+(define display-clear-line (lambda ()
+  (write "\x1b[K")))
+
+(define display-set-reverse (lambda ()
+  (write "\x1b[7m")))
+
+(define display-reset (lambda ()
+  (write "\x1b[0m")))
+
+(define display-line (lambda (text width)
+  (define truncated (if (> (string-length text) width)
+                      (substring text 0 width)
+                      text))
+  (write truncated)
+  (display-clear-line)))
+
+(define display-status (lambda (buf width)
+  (display-set-reverse)
+  (define name (buffer-name buf))
+  (define modified (if (buf-modified buf) " **" ""))
+  (define pos (string-append " L" (number->string (+ (buf-row buf) 1))
+                             " C" (number->string (+ (buf-col buf) 1))))
+  (define status (string-append name modified "  " pos))
+  (display-line status width)
+  (display-reset)))
+
+;; Render the editor screen (uses `for` which compiles to a jump loop)
+(define display-editor (lambda (buf height width)
+  (display-home)
+  (define rows height)
+  (define top (buf-top buf))
+  (define lines (buf-lines buf))
+  (define total (length lines))
+  (for ii 0 rows
+    (display-move-to ii 0)
+    (define line-index (+ top ii))
+    (if (< line-index total)
+      (display-line (list-ref lines line-index) width)
+      (display-clear-line)))
+  (display-move-to height 0)
+  (display-status buf width)
+  (define cursor-row (- (buf-row buf) top))
+  (if (>= cursor-row 0) (display-move-to cursor-row (buf-col buf)))
+  (display-cursor-show)
+  (write "")))
+
+;; ── Command dispatch table ──────────────────────────────────────────────
+(define *global-keymap* ())
+
+(define define-key (lambda (key cmd)
+  (set! *global-keymap* (cons (list key cmd) *global-keymap*))))
+
+(define lookup-command (lambda (key)
+  (define pair (assoc key *global-keymap*))
+  (if pair (list-ref pair 1) #f)))
+
+;; ── Built-in commands ───────────────────────────────────────────────────
+(define cmd-insert (lambda (buf)
+  (buffer-insert-char buf *last-key*)))
+
+(define cmd-newline (lambda (buf)
+  (buffer-newline buf)))
+
+(define cmd-backspace (lambda (buf)
+  (buffer-backspace buf)))
+
+(define cmd-delete (lambda (buf)
+  (buffer-delete buf)))
+
+(define cmd-left (lambda (buf)
+  (buffer-move-left buf)))
+
+(define cmd-right (lambda (buf)
+  (buffer-move-right buf)))
+
+(define cmd-up (lambda (buf)
+  (buf-clamp (buf-set-row buf (- (buf-row buf) 1)))))
+
+(define cmd-down (lambda (buf)
+  (buf-clamp (buf-set-row buf (+ (buf-row buf) 1)))))
+
+(define cmd-home (lambda (buf)
+  (buf-set-col buf 0)))
+
+(define cmd-end (lambda (buf)
+  (buf-set-col buf (buf-line-len buf))))
+
+(define cmd-page-up (lambda (buf)
+  (define h (- (list-ref *term-size* 0) 1))
+  (buf-clamp (buf-set-row buf (max 0 (- (buf-row buf) h))))))
+
+(define cmd-page-down (lambda (buf)
+  (define h (- (list-ref *term-size* 0) 1))
+  (buf-clamp (buf-set-row buf (min (- (buf-line-count buf) 1) (+ (buf-row buf) h))))))
+
+(define cmd-kill-line (lambda (buf)
+  (define row (buf-row buf))
+  (define col (buf-col buf))
+  (define line (list-ref (buf-lines buf) row))
+  (define line-len (string-length line))
+  (if (>= col line-len)
+    (if (< row (- (length (buf-lines buf)) 1))
+      (begin
+        (define next-line (list-ref (buf-lines buf) (+ row 1)))
+        (define joined (string-append line next-line))
+        (define new-lines (append (take (buf-lines buf) row)
+                                 (cons joined (list-tail (buf-lines buf) (+ row 2)))))
+        (buf-set-modified (buf-set-lines buf new-lines) #t))
+      buf)
+    (begin
+      (define new-line (substring line 0 col))
+      (define new-lines (append (take (buf-lines buf) row)
+                               (cons new-line (list-tail (buf-lines buf) (+ row 1)))))
+      (buf-set-modified (buf-set-col (buf-set-lines buf new-lines) col) #t)))))
+
+;; ── Buffer movement helpers ─────────────────────────────────────────────
+(define buffer-move-left (lambda (buf)
+  (if (> (buf-col buf) 0)
+    (buf-set-col buf (- (buf-col buf) 1))
+    (if (> (buf-row buf) 0)
+      (let ((prev (list-ref (buf-lines buf) (- (buf-row buf) 1))))
+        (buf-set-col (buf-set-row buf (- (buf-row buf) 1))
+                     (string-length prev)))
+      buf))))
+
+(define buffer-move-right (lambda (buf)
+  (if (< (buf-col buf) (buf-line-len buf))
+    (buf-set-col buf (+ (buf-col buf) 1))
+    (if (< (buf-row buf) (- (buf-line-count buf) 1))
+      (buf-set-col (buf-set-row buf (+ (buf-row buf) 1)) 0)
+      buf))))
+
+;; ── Complex commands ────────────────────────────────────────────────────
+(define cmd-save (lambda (buf)
+  (if (buf-filename buf)
+    (begin (buffer-save buf) buf)
+    (cmd-save-as buf))))
+
+(define cmd-save-as (lambda (buf)
+  (write "\x1b[0m")
+  (display-move-to (- (list-ref *term-size* 0) 1) 0)
+  (display-clear-line)
+  (write "Save as: ")
+  (define path (read-line))
+  (if (> (string-length path) 0)
+    (let ((new-buf (buf-set-filename buf path)))
+      (buffer-save new-buf)
+      new-buf)
+    buf)))
+
+(define cmd-open (lambda (buf)
+  (write "\x1b[0m")
+  (display-move-to (- (list-ref *term-size* 0) 1) 0)
+  (display-clear-line)
+  (write "Open file: ")
+  (define path (read-line))
+  (if (> (string-length path) 0)
+    (buffer-load path)
+    buf)))
+
+(define cmd-goto-line (lambda (buf)
+  (write "\x1b[0m")
+  (display-move-to (- (list-ref *term-size* 0) 1) 0)
+  (display-clear-line)
+  (write "Goto line: ")
+  (define n (string->number (read-line)))
+  (if (and n (>= n 1) (<= n (buf-line-count buf)))
+    (buf-clamp (buf-set-row buf (- n 1)))
+    buf)))
+
+(define cmd-C-l (lambda (buf)
+  (define h (- (list-ref *term-size* 0) 1))
+  (buf-set-top buf (max 0 (- (buf-row buf) (/ h 2))))))
+
+;; ── Search ──────────────────────────────────────────────────────────────
+(define cmd-C-s (lambda (buf)
+  (write "\x1b[0m")
+  (display-move-to (- (list-ref *term-size* 0) 1) 0)
+  (display-clear-line)
+  (write "Search: ")
+  (define query (read-line))
+  (if (> (string-length query) 0)
+    (let ((lines (buf-lines buf))
+          (total (length (buf-lines buf)))
+          (start-row (buf-row buf))
+          (start-col (buf-col buf))
+          (found #f)
+          (result buf))
+      ;; Iterate with for (compiled to jump loop)
+      (for ii 0 total
+        (if (not found)
+          (let ((idx (string-index-of (list-ref lines ii) query)))
+            (if (and idx (>= idx 0) (or (> ii start-row) (and (= ii start-row) (>= idx start-col))))
+              (begin
+                (set! found #t)
+                (set! result (buf-set-row (buf-set-col (buf-set-top buf ii) idx) ii)))))))
+      (if found result
+        ;; Wrap around search
+        (begin
+          (for ii 0 start-row
+            (if (not found)
+              (let ((idx (string-index-of (list-ref lines ii) query)))
+                (if (and idx (>= idx 0))
+                  (begin
+                    (set! found #t)
+                    (set! result (buf-set-row (buf-set-col (buf-set-top buf ii) idx) ii)))))))
+          (if found result buf))))
+    buf)))
+
+;; ── C-x commands ────────────────────────────────────────────────────────
+(define cmd-C-x-C-c (lambda (buf)
+  (set! *quit-requested* #t)
+  buf))
+
+(define cmd-C-x-C-s (lambda (buf)
+  (cmd-save buf)))
+
+(define cmd-C-x-C-w (lambda (buf)
+  (cmd-save-as buf)))
+
+(define cmd-C-x-C-f (lambda (buf)
+  (cmd-open buf)))
+
+(define cmd-C-g (lambda (buf)
+  (set! *prefix-key* -1)
+  buf))
+
+;; ── Keymap ──────────────────────────────────────────────────────────────
+(define-key KEY-LEFT cmd-left)
+(define-key KEY-RIGHT cmd-right)
+(define-key KEY-UP cmd-up)
+(define-key KEY-DOWN cmd-down)
+(define-key KEY-HOME cmd-home)
+(define-key KEY-END cmd-end)
+(define-key KEY-PAGE-UP cmd-page-up)
+(define-key KEY-PAGE-DN cmd-page-down)
+(define-key KEY-DELETE cmd-delete)
+(define-key KEY-BACKSPACE cmd-backspace)
+
+;; ── Dispatch ────────────────────────────────────────────────────────────
+(define dispatch-key (lambda (buf key)
+  (set! *last-key* key)
+  (cond
+    ((= *prefix-key* C-x)
+     (set! *prefix-key* -1)
+     (cond
+       ((= key C-c) (cmd-C-x-C-c buf))
+       ((= key C-f) (cmd-C-x-C-f buf))
+       ((= key C-s) (cmd-C-x-C-s buf))
+       ((= key C-w) (cmd-C-x-C-w buf))
+       (#t (cmd-C-g buf))))
+    ((= key C-x)
+     (set! *prefix-key* C-x)
+     buf)
+    ((= key C-g)
+     (set! *prefix-key* -1)
+     buf)
+    ((< key 0)
+     (define cmd (lookup-command key))
+     (if cmd (cmd buf) buf))
+    ((and (>= key 1) (<= key 26))
+     (cond
+       ((= key C-a) (cmd-home buf))
+       ((= key C-e) (cmd-end buf))
+       ((= key C-b) (cmd-left buf))
+       ((= key C-f) (cmd-right buf))
+       ((= key C-p) (cmd-up buf))
+       ((= key C-n) (cmd-down buf))
+       ((= key C-d) (cmd-delete buf))
+       ((= key C-k) (cmd-kill-line buf))
+       ((= key C-l) (cmd-C-l buf))
+       ((= key C-s) (cmd-C-s buf))
+       ((= key C-v) (cmd-page-down buf))
+       ((= key C-r) (cmd-page-up buf))
+       (#t buf)))
+    ((= key KEY-TAB) (buffer-insert-char buf 9))
+    ((= key KEY-ENTER) (cmd-newline buf))
+    ((= key KEY-BACKSPACE) (cmd-backspace buf))
+    (#t (cmd-insert buf)))))
+
+;; ── Main loop (tail-recursive chain) ────────────────────────────────────
+;; editor-iter → editor-step → editor-render → editor-iter → ...
+;; All calls in tail position → TailCall opcode → no stack growth.
+
+(define editor-iter (lambda (buf height width)
+  (if *quit-requested* buf
+    (editor-step buf height width (read-key)))))
+
+(define editor-step (lambda (buf height width key)
+  (if (= key -1)
+    (begin (set! *quit-requested* #t) buf)
+    (editor-render (buf-clamp (buf-ensure-visible (dispatch-key buf key) height))
+                   height width))))
+
+(define editor-render (lambda (buf height width)
+  (display-editor buf (- height 1) width)
+  (editor-iter buf height width)))
+
+;; ── Entry point ─────────────────────────────────────────────────────────
+(define editor-loop (lambda (buf)
+  (let ((size (terminal-size)))
+    (let ((height (list-ref size 0))
+          (width (list-ref size 1)))
+      (set! *term-size* size)
+      (display-clear)
+      (display-cursor-hide)
+      (editor-iter buf height width)
+      ;; After quit — cleanup
+      (display-cursor-show)
+      (display-move-to (- height 1) 0)
+      (display-clear-line)
+      (write "\x1b[0m")))))
+
+(define pimacs (lambda ()
+  (define cmds (command-line))
+  (define buf (if (null? cmds) (make-buffer) (buffer-load (car cmds))))
+  (raw-mode #t)
+  (editor-loop buf)
+  (raw-mode #f)))
+
+;; Load user customization if it exists
+(if (file-exists? "pimacs/init.pi")
+  (load "pimacs/init.pi"))
+
+(pimacs)
