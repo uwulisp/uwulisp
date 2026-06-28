@@ -7,8 +7,6 @@ pkgs.mkShell {
     rustfmt
     clippy
     rust-analyzer
-    gcc
-    python3
   ];
 
   shellHook = ''
