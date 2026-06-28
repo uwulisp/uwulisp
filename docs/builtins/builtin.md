@@ -7,7 +7,9 @@ sidebar:
 
 This document describes all builtin procedures registered in the global environment. Functions are grouped by category.
 
-See also: [Ahead-of-Time Compilation](aot/) — `aot-compile` and `aot-load` builtins.
+See also:
+- [Terminal & I/O](editor/) — raw terminal control, byte-level I/O, and string utilities for interactive programs.
+- [Ahead-of-Time Compilation](aot/) — `aot-compile` and `aot-load` builtins.
 
 ### Complex numbers
 

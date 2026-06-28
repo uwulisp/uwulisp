@@ -2,6 +2,7 @@
 mod asm;
 mod base;
 pub(crate) mod cffi;
+mod editor;
 mod network;
 mod utils;
 
@@ -100,6 +101,9 @@ pub fn global_env(heap: &mut Heap) -> Env {
     asm::register_load_asm(env, heap);
     #[cfg(target_arch = "x86_64")]
     asm::register_load_asm_parallel(env, heap);
+    editor::register_terminal(env, heap);
+    editor::register_string_extras(env, heap);
+
     register_aot(env, heap);
 
     env
