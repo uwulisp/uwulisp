@@ -55,6 +55,15 @@ Returns `1.0` if the argument is an empty list, `0.0` otherwise.
 
 ---
 
+### `list?`
+Returns `#t` if the argument is a list (including the empty list), `#f` otherwise.
+
+```
+(list? x)  →  Bool
+```
+
+---
+
 ### `map`
 Applies a function to each element of a list and returns a new list of results.
 

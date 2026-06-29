@@ -34,9 +34,12 @@ Source text is scanned character-by-character by `tokenize()` in `reader.rs`. Th
 #f              ; boolean atom  → Expr::Bool(false)
 1+2i            ; complex atom  → Expr::Complex(1.0, 2.0)
 3i              ; pure imaginary → Expr::Complex(0.0, 3.0)
-i               ; imaginary unit → Expr::Complex(0.0, 1.0)
++i              ; imaginary unit → Expr::Complex(0.0, 1.0)
+-i              ; negative imaginary unit → Expr::Complex(0.0, -1.0)
 my-symbol       ; symbol atom   → Expr::Symbol("my-symbol")
 ```
+
+> **Note:** Bare `i` is now parsed as a **symbol** rather than the imaginary unit, so it can be used as a variable name. Use `+i` or `-i` for the imaginary unit in complex contexts.
 
 ---
 
@@ -48,7 +51,7 @@ After scanning, `parse()` in `reader.rs` builds an `Expr` tree. There are ten va
 |---------|--------------|-----------------|
 | `Int(i64)` | `42`, `-7`, `0` | ✅ yes |
 | `Float(f64)` | `3.14`, `-1.5e2` | ✅ yes |
-| `Complex(f64, f64)` | `1+2i`, `-3i`, `i` | ✅ yes |
+| `Complex(f64, f64)` | `1+2i`, `-3i`, `+i`, `-i` | ✅ yes |
 | `Bool(bool)` | `#t`, `#f` | ✅ yes |
 | `Str(String)` | `"hello"` | ✅ yes |
 | `CubicalTerm` | opaque — produced by cubical builtins | ✅ yes |
@@ -204,6 +207,8 @@ Relative paths are resolved against the directory of the file doing the import w
 (square 9)   ; uses a definition from math.pi
 ```
 
+> **VM note:** `import` always falls back to the tree-walker and is not compiled to bytecode.
+
 ---
 
 ### `begin` — special form
@@ -301,6 +306,22 @@ Evaluates `f` and each `arg` left-to-right, then performs the call as a trampoli
 ```
 
 > **Builtin functions** are opaque Rust closures and are always called immediately — `tailcall` has no additional effect on them beyond normal argument evaluation.
+
+---
+
+### `set!` — special form
+
+**Rule:** `(set! name expr)`
+
+Evaluates `expr` and assigns the result to an existing variable binding `name`, walking up the environment chain to find it. The form returns `()`.
+
+Unlike `define`, which creates a new binding in the current environment, `set!` mutates an existing binding and raises an error if no such binding exists.
+
+```lisp
+(define x 10)
+(set! x 20)   ; x is now 20
+(set! y 30)   ; error: y is not defined
+```
 
 ---
 
