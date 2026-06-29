@@ -33,3 +33,6 @@ cargo run --release examples.pic
 
 ## document
 [document](https://pi-lisp.github.io)
+
+## LICENSE
+[LICENSE](LICENSE)
