@@ -560,7 +560,7 @@ impl<'h> VM<'h> {
     /// Convert a `VmValue` to an `Expr` for storage in the GC heap.
     fn vm_value_to_expr_inner(&self, v: VmValue) -> Result<Expr, String> {
         match v {
-            VmValue::Builtin(_) => Err("cannot store Builtin in environment".into()),
+            VmValue::Builtin(f) => Ok(Expr::Func(f)),
             VmValue::Closure {
                 chunk: _,
                 params,

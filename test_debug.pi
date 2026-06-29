@@ -1,0 +1,7 @@
+(import "lib/clos.pi")
+(print "imported")
+(defclass point ()
+  ((x :initarg :x)
+   (y :initarg :y)))
+(print "slots:")
+(print (get-all-slots 'point))

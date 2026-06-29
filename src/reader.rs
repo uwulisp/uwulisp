@@ -230,6 +230,10 @@ fn parse_complex(s: &str) -> Option<Expr> {
     if !s.ends_with('i') {
         return None;
     }
+    // Bare "i" is a valid symbol name, not complex.
+    if s == "i" {
+        return None;
+    }
     let body = &s[..s.len() - 1]; // strip trailing 'i'
 
     // Pure imaginary: a number followed by 'i' (e.g. "3i", "-3i")
@@ -237,8 +241,8 @@ fn parse_complex(s: &str) -> Option<Expr> {
         return Some(Expr::Complex(0.0, n));
     }
 
-    // Special cases: "i" and "+i" and "-i"
-    if body.is_empty() || body == "+" {
+    // Special cases: "+i" and "-i"
+    if body == "+" {
         return Some(Expr::Complex(0.0, 1.0));
     }
     if body == "-" {

@@ -302,6 +302,16 @@ pub fn register_lists(env: Env, heap: &mut Heap) {
             _ => Ok(Expr::Bool(false)),
         })),
     );
+
+    env_set(
+        heap,
+        env,
+        "list?".into(),
+        Expr::Func(Rc::new(|args, _heap| match &args[0] {
+            Expr::List(_) => Ok(Expr::Bool(true)),
+            _ => Ok(Expr::Bool(false)),
+        })),
+    );
 }
 
 pub fn register_higher_order(env: Env, heap: &mut Heap) {
